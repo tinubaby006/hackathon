@@ -696,10 +696,18 @@ The upload implementation must be compatible with persistent container storage.
 Example deployment expectation:
 
 ```text
-./uploads:/app/public/uploads
+./uploads:/app/data/uploads
 ```
 
 The exact Docker configuration can be finalized during packaging, but the application must already use a persistent-volume-compatible upload directory.
+
+Uploaded project images must never be exposed through a directly guessable static file path.
+
+Image access must be controlled by the application:
+
+* before the submission deadline, project images are private and accessible only to authorized project/team users and appropriate event administration users
+* after the submission deadline, images belonging to valid submitted public projects may be served publicly
+* images belonging to non-submitted projects must remain inaccessible to unauthenticated users
 
 Required validation:
 
@@ -1314,7 +1322,21 @@ POST   /api/projects/:projectId/submit
 POST   /api/projects/:projectId/reopen
 POST   /api/projects/:projectId/images
 DELETE /api/projects/:projectId/images/:imageId
+GET    /api/projects/:projectId/images/:imageId
 ```
+Image access must be authorization-controlled.
+
+The image endpoint must:
+
+* verify that the image belongs to the requested project
+* determine the project's current visibility from the server-side deadline and submission state
+* allow authorized private access before the deadline
+* allow public access only when the project is publicly visible
+* reject unauthorized requests
+
+Do not return the underlying filesystem path to clients.
+
+Do not expose the upload directory through a public static route.
 
 Every mutation must verify team membership and deadline state.
 
@@ -1565,7 +1587,9 @@ Escape/sanitize user-generated content appropriately.
 
 Do not build uploads in a way that only works inside one temporary container.
 
-Use a dedicated upload directory.
+Use a dedicated upload directory outside the application's public web root.
+
+Uploaded files must be served through application-controlled routes rather than direct static filesystem access.
 
 The application should behave correctly when:
 
@@ -1742,6 +1766,11 @@ Test both:
 * valid image upload
 * invalid image rejected
 * image persists across application restart
+* private project images cannot be accessed anonymously before the submission deadline
+* authorized project/team users can access private project images
+* submitted public project images become publicly accessible after the deadline
+* non-submitted project images remain private after the deadline
+* image requests cannot access files belonging to another project
 
 ---
 
@@ -1925,21 +1954,24 @@ The most important test should reproduce the complete platform lifecycle.
 
 27. Team reopens and resubmits before deadline
 
-28. Current server time reaches the submission deadline
+28. Before the submission deadline, confirm project images are not publicly accessible
+29. Confirm authorized project users can access their private images
 
-29. Confirm project mutations are rejected at the exact deadline boundary
+30. Current server time reaches the submission deadline
 
-30. Confirm project is effectively locked
+31. Confirm project mutations are rejected at the exact deadline boundary
 
-31. Confirm team changes are locked
+32. Confirm project is effectively locked
 
-32. Confirm submitted project is publicly visible
+33. Confirm team changes are locked
 
-33. Confirm gallery search/filter works
+34. Confirm submitted project is publicly visible
 
-34. Confirm unauthorized users cannot modify protected resources
+35. Confirm gallery search/filter works
 
-35. Confirm Judge can access event/project context without participant editing permissions
+36. Confirm unauthorized users cannot modify protected resources
+
+37. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2091,13 +2123,14 @@ The implementation is complete when:
 10. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
 11. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
 12. Local project images persist across application restarts when persistent storage is mounted.
-13. Submitted projects become publicly visible after the deadline.
-14. The public gallery supports search and filtering.
-15. Organizers can assign and remove event-scoped Judges.
-16. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-17. Cross-event authorization is enforced server-side.
-18. The complete lifecycle works from a clean local installation.
-19. The implementation remains limited to the functionality specified in this document.
+13. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
+14. Submitted projects become publicly visible after the deadline.
+15. The public gallery supports search and filtering.
+16. Organizers can assign and remove event-scoped Judges.
+17. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+18. Cross-event authorization is enforced server-side.
+19. The complete lifecycle works from a clean local installation.
+20. The implementation remains limited to the functionality specified in this document.
 
 ---
 
