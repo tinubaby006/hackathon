@@ -407,11 +407,11 @@ Before start_at
     ↓
 DRAFT
 
-start_at <= current_time < end_at
+start_at <= now() < end_at
     ↓
 ONGOING
 
-current_time >= end_at
+now() >= end_at
     ↓
 ENDED
 
@@ -433,6 +433,25 @@ No background scheduler is required to transition events.
 The backend should determine the effective lifecycle status whenever the event is read or a lifecycle-dependent operation is performed.
 
 The submission deadline is independent of the event lifecycle status and is enforced separately according to the submission deadline rules.
+
+### Authoritative server clock
+
+All backend time-dependent decisions must use one server-side clock abstraction, such as `now()`.
+
+The production implementation returns the current server time.
+
+Business logic must not call `new Date()` or equivalent wall-clock APIs directly for lifecycle or deadline decisions.
+
+The same clock source must be used for:
+- event lifecycle derivation
+- submission deadline enforcement
+- team/invite mutations affected by the deadline
+- project mutations affected by the deadline
+- project/image visibility rules affected by the deadline
+
+Tests must be able to inject a deterministic clock value.
+
+The client must never provide or override the authoritative current time.
 
 ---
 
@@ -801,27 +820,35 @@ After the deadline, participants must not be able to:
 
 Do not rely on the UI disabling buttons.
 
-Every relevant backend operation must independently check the event deadline.
+A project is considered effectively LOCKED once now() >= submission_deadline
 
 The server's current time is authoritative.
 
-The submission deadline must be evaluated directly from the server's current time.
+All deadline checks must use the single server-side clock abstraction, such as `now()`.
 
 Use:
 
-current_time < submission_deadline
+now() < submission_deadline
+
     → submission-dependent mutations are allowed
 
-current_time >= submission_deadline
+now() >= submission_deadline
+
     → submission-dependent mutations are rejected
 
 The backend must not rely on a stored project or event status to determine whether the deadline has passed.
 
-The deadline check must run on every participant-controlled mutation that is restricted by the submission deadline.
+Every participant-controlled mutation restricted by the submission deadline must independently evaluate the deadline using the authoritative server clock.
 
 No background scheduler or cron job is required for deadline enforcement.
 
-A project is considered effectively LOCKED once current_time >= submission_deadline, even if a persisted status field has not yet been updated.
+A project is considered effectively LOCKED once:
+
+now() >= submission_deadline
+
+even if a persisted status field has not yet been updated.
+
+Tests must be able to inject a deterministic clock value so deadline behavior can be tested without waiting for real time.
 
 ---
 
@@ -1228,6 +1255,8 @@ Indexes must support event isolation, membership checks, team/project lookups, i
 
 The exact URL naming may be adapted to the chosen framework, but the capabilities must exist.
 
+All lifecycle and deadline-sensitive API operations evaluate time through the same authoritative server clock abstraction. Client-supplied timestamps are ignored for authorization, lifecycle, deadline, or visibility decisions.
+
 ## Authentication
 
 ```text
@@ -1573,7 +1602,7 @@ Deadline-dependent project mutations must evaluate the submission deadline using
 The API must reject the mutation when:
 
 ```text
-current_time >= submission_deadline
+now() >= submission_deadline
 ```
 
 ## Public gallery
@@ -2002,13 +2031,13 @@ At minimum, create automated coverage for:
 
 Test at minimum:
 
-current_time < submission_deadline
+now() < submission_deadline
     → mutation allowed
 
-current_time = submission_deadline
+now() = submission_deadline
     → mutation rejected and project effectively locked
 
-current_time > submission_deadline
+now() > submission_deadline
     → mutation rejected and project effectively locked
 
 Deadline tests must use controlled server time so the exact boundary can be tested deterministically.
@@ -2063,6 +2092,16 @@ Test both:
 * invalid enum/status values are rejected
 * foreign-key violations are rejected
 * database constraints remain active in the local SQLite environment
+
+### Clock abstraction tests
+
+- Verify production clock returns server time.
+- Verify tests can inject a fixed clock value.
+- Verify lifecycle decisions use the injected clock.
+- Verify submission deadline decisions use the injected clock.
+- Verify exact `start_at`, `submission_deadline`, and `end_at` boundaries deterministically.
+- Verify no real-time sleeping is required for deadline/lifecycle tests.
+- Verify all deadline-sensitive rules observe the same injected clock value.
 
 ---
 
@@ -2238,6 +2277,21 @@ Only after the application works:
 ---
 
 # 39. Critical End-to-End Test
+
+### Controlled test time
+
+The E2E lifecycle test must use an injected/fake server clock.
+
+Do not wait or sleep for real time.
+
+Explicitly advance the server clock to:
+1. a time before `start_at`
+2. exactly `start_at`
+3. a time before `submission_deadline`
+4. exactly `submission_deadline`
+5. exactly `end_at`
+
+All lifecycle, deadline, mutation, and visibility assertions must be evaluated against that controlled clock.
 
 The most important test should reproduce the complete platform lifecycle.
 
@@ -2504,6 +2558,8 @@ The implementation is complete when:
 28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
 29. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
 30. Seed initialization is deterministic and idempotent: a clean local installation receives the required demonstration data, repeated startup does not duplicate or overwrite existing data, and production/non-demo environments do not automatically reset application data.
+31. All lifecycle, deadline, mutation, and visibility time checks use one authoritative server clock abstraction.
+32. Time-dependent tests are deterministic and do not depend on real-time sleeping.
 
 ---
 
