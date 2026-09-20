@@ -1203,8 +1203,10 @@ Authenticated users can create event proposals:
 
 ```text
 POST  /api/events
+GET   /api/events
 GET   /api/events/:eventId
 PATCH /api/events/:eventId
+GET   /api/me/events
 ```
 
 Creation creates a pending event proposal.
@@ -1225,6 +1227,16 @@ structural changes are rejected once the effective lifecycle is ONGOING
 structural changes remain rejected while the lifecycle is ENDED
 the backend must determine the effective lifecycle from server time
 the client must not bypass the freeze by sending a lifecycle/status value
+
+GET /api/events returns public approved events suitable for the public event listing.
+
+It must not expose pending events as normal public events.
+
+GET /api/me/events requires authentication and returns the authenticated user's event relationships, including event-scoped memberships and their own pending event proposals.
+
+GET /api/events/:eventId returns only information the requester is authorized to view for that event.
+
+Protected event data must not be exposed through the public event read.
 
 **---**
 
@@ -1366,34 +1378,80 @@ The initial Organizer is always the approved event creator.
 ## Event configuration
 
 ```text
+GET    /api/events/:eventId/tracks
 POST   /api/events/:eventId/tracks
 PATCH  /api/events/:eventId/tracks/:trackId
 DELETE /api/events/:eventId/tracks/:trackId
 
+GET    /api/events/:eventId/prizes
 POST   /api/events/:eventId/prizes
 PATCH  /api/events/:eventId/prizes/:prizeId
 DELETE /api/events/:eventId/prizes/:prizeId
 
+GET    /api/events/:eventId/questions
 POST   /api/events/:eventId/questions
 PATCH  /api/events/:eventId/questions/:questionId
 DELETE /api/events/:eventId/questions/:questionId
 ```
 
-All require appropriate Organizer authorization.
+Read endpoints must enforce the same event boundaries as mutation endpoints.
+
+Publicly readable event configuration may include tracks, prizes, and questions associated with an approved public event.
+
+Pending-event and protected organizer data must remain restricted.
+
+All mutation endpoints require appropriate Organizer authorization.
+
+Read endpoints follow the read-access rules defined above.
 
 **---**
+
+## Event administration reads
+
+GET /api/events/:eventId/members
+GET /api/events/:eventId/teams
+GET /api/events/:eventId/projects
+
+These endpoints require an appropriate event-scoped role.
+
+Organizer:
+- may inspect participants, teams, and submitted projects for their event
+
+Judge:
+- may view the event context and submitted project information for their assigned event
+- must not receive participant/team-management permissions
+
+Participant:
+- may access only resources permitted by their participant membership and team membership
+
+Responses must not expose passwords, session identifiers, CSRF tokens, raw invitation tokens, or other private security data.
 
 ## Teams
 
 ```text
 POST   /api/events/:eventId/teams
+GET    /api/events/:eventId/teams
 GET    /api/events/:eventId/teams/:teamId
+
+GET    /api/teams/:teamId
+GET    /api/teams/:teamId/project
+
 POST   /api/teams/:teamId/invites
+GET    /api/teams/:teamId/invites
+
+GET    /api/team-invites/:token
 POST   /api/team-invites/:token/accept
+
 DELETE /api/teams/:teamId/members/:userId
 DELETE /api/teams/:teamId
 DELETE /api/team-invites/:inviteId
 ```
+
+GET /api/team-invites/:token may be accessed while logged out and returns only the invitation context required to display the invitation flow.
+
+It must not expose the raw stored token, private team data, or security-sensitive information.
+
+Invitation acceptance remains an explicit POST action.
 
 Invite revocation must:
 
@@ -1426,7 +1484,19 @@ POST   /api/projects/:projectId/reopen
 POST   /api/projects/:projectId/images
 DELETE /api/projects/:projectId/images/:imageId
 GET    /api/projects/:projectId/images/:imageId
+GET /api/events/:eventId/projects
+GET /api/teams/:teamId/project
 ```
+GET /api/events/:eventId/projects is restricted to appropriate Organizer and Judge event roles.
+
+Organizers may inspect projects for their event.
+
+Judges may view submitted projects for their assigned event.
+
+Participants may access their team's project through GET /api/teams/:teamId/project when authorized.
+
+Private project data must remain subject to the project's visibility and authorization rules.
+
 Image access must be authorization-controlled.
 
 The image endpoint must:
@@ -1794,6 +1864,21 @@ At minimum, create automated coverage for:
 * logout invalidates the previous session
 * session cookie uses the required security attributes
 
+## API read operations
+
+- public event listing excludes pending events
+- GET /api/me/events returns only the authenticated user's event relationships
+- cross-event event reads are rejected
+- Organizer can read participants for their event
+- Organizer can read teams for their event
+- Organizer can read submitted projects for their event
+- Judge can read submitted project information for their assigned event
+- Participant can read their authorized team and project
+- participant cannot read another event's protected team/project data
+- event tracks/prizes/questions are correctly scoped to the event
+- logged-out user can read allowed invitation context without accepting the invite
+- invitation read does not expose raw token or security-sensitive data
+
 ## Event approval
 
 * authenticated user creates event
@@ -2038,94 +2123,50 @@ Only after the application works:
 The most important test should reproduce the complete platform lifecycle.
 
 1. Create Admin
-
 2. Create normal authenticated user
-
 3. Normal user creates event proposal
-
 4. Confirm event is PENDING_APPROVAL
-
 5. Confirm creator is NOT Organizer yet
-
 6. Admin opens approval queue
-
 7. Admin approves event
-
 8. Confirm creator becomes Organizer
-
-9. Confirm authenticated state-changing requests require a valid CSRF token
-
-10. Confirm login establishes a new authenticated session
-
-11. Confirm logout invalidates the session
-
-12. Organizer configures event
-
-13. Confirm event is DRAFT before start_at
-
-14. Confirm Organizer can modify event structure while event is DRAFT
-
-15. Confirm event becomes ONGOING at start_at
-
-16. Confirm structural event configuration is frozen at start_at
-
-17. Confirm Organizer cannot modify frozen event structure while ONGOING
-
-18. Confirm event becomes ENDED at end_at
-
-19. Organizer assigns a Judge
-
-20. Confirm Judge membership is created
-
-21. Confirm Judge can access event/project context without participant permissions
-
-22. Participant joins event
-
-23. Participant creates team
-
-24. Confirm team creation creates both the team and owner membership atomically
-
-25. Participant generates invite
-
-26. Confirm team owner can revoke the outstanding invite
-
-27. Second user opens invite while logged out
-
-28. Second user signs up/logs in
-
-29. Invite context survives authentication
-
-30. Second user explicitly accepts invite
-
-31. Team reaches valid membership state
-
-32. Team creates project
-
-33. Team edits project
-
-34. Team submits project
-
-35. Team reopens and resubmits before deadline
-
-36. Before the submission deadline, confirm project images are not publicly accessible
-
-37. Confirm authorized project users can access their private images
-
-38. Current server time reaches the submission deadline
-
-39. Confirm project mutations are rejected at the exact deadline boundary
-
-40. Confirm project is effectively locked
-
-41. Confirm team changes are locked
-
-42. Confirm submitted project is publicly visible
-
-43. Confirm gallery search/filter works
-
+9. Confirm authenticated user can view their My Events relationships
+10. Confirm Organizer can read event participants, teams, and submitted projects
+11. Confirm authenticated state-changing requests require a valid CSRF token
+12. Confirm login establishes a new authenticated session
+13. Confirm logout invalidates the session
+14. Organizer configures event
+15. Confirm event is DRAFT before start_at
+16. Confirm Organizer can modify event structure while event is DRAFT
+17. Participant joins event
+18. Participant creates team
+19. Participant generates invite
+20. Second user opens invite while logged out
+21. Second user signs up/logs in
+22. Invite context survives authentication
+23. Second user explicitly accepts invite
+24. Team reaches valid membership state
+25. Team creates project
+26. Team edits project
+27. Team submits project
+28. Team reopens and resubmits before deadline
+29. Confirm event becomes ONGOING at start_at
+30. Confirm structural event configuration is frozen at start_at
+31. Confirm Organizer cannot modify frozen event structure while ONGOING
+32. Before the submission deadline, confirm project images are not publicly accessible
+33. Confirm authorized project users can access their private images
+34. Organizer assigns a Judge
+35. Confirm Judge membership is created
+36. Confirm Judge can access event/project context without participant permissions
+37. Current server time reaches the submission deadline
+38. Confirm project mutations are rejected at the exact deadline boundary
+39. Confirm project is effectively locked
+40. Confirm team changes are locked
+41. Confirm submitted project is publicly visible
+42. Confirm gallery search/filter works
+43. Confirm event becomes ENDED at end_at
 44. Confirm unauthorized users cannot modify protected resources
-
-45. Confirm Judge can access event/project context without participant editing permissions
+45. Confirm Judge cannot edit projects and has read-only project access
 
 ---
 
@@ -2289,8 +2330,11 @@ The implementation is complete when:
 20. Cross-event authorization is enforced server-side.
 21. The complete lifecycle works from a clean local installation.
 22. The implementation remains limited to the functionality specified in this document.
-23. State-changing authenticated requests are protected against CSRF.
-24. Session cookies use appropriate security attributes and sessions are invalidated on logout.
+23. Required event, membership, team, invitation, configuration, and project read operations are available with correct authorization and event isolation.
+
+24. Public and protected read endpoints do not expose private or security-sensitive data.
+25. State-changing authenticated requests are protected against CSRF.
+26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
 
 ---
 
