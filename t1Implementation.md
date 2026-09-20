@@ -131,6 +131,27 @@ Required:
 * session expiration
 * logout invalidation
 
+CSRF protection must be implemented for browser-based state-changing requests.
+
+State-changing requests such as POST, PATCH, PUT, and DELETE must require a valid CSRF token associated with the authenticated session.
+
+The CSRF token must be generated using a cryptographically secure random source and must not be accepted from an untrusted URL parameter.
+
+The server must validate the CSRF token before performing the protected mutation.
+
+Session cookies must use:
+
+- HttpOnly
+- SameSite=Lax or stricter
+- Path=/
+- Secure when the application is served over HTTPS
+
+The session identifier must be opaque and unpredictable.
+
+A successful login must establish a new authenticated session rather than trusting a session created before authentication.
+
+Logout must invalidate the server-side session so the previous session identifier cannot be reused.
+
 Do not use JWT authentication.
 
 Do not require OAuth.
@@ -923,7 +944,12 @@ user_id
 expires_at
 created_at
 last_used_at
+csrf_token_hash
 ```
+
+csrf_token_hash stores only a secure hash of the session's CSRF token.
+
+The raw CSRF token must never be persisted in the database.
 
 ---
 
@@ -1160,7 +1186,14 @@ POST /api/auth/signup
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
+GET  /api/auth/csrf
 ````
+
+GET /api/auth/csrf returns a CSRF token for the currently authenticated session.
+
+State-changing authenticated endpoints must require the corresponding CSRF token.
+
+The CSRF token must be validated server-side before authorization-sensitive mutations are executed.
 
 **---**
 
@@ -1623,6 +1656,11 @@ Implement backend enforcement for:
 * server-side sessions
 * secure cookies
 * session invalidation on logout
+* CSRF protection for state-changing requests
+* HttpOnly session cookies
+* SameSite cookie protection
+* Secure cookies when served over HTTPS
+* session rotation on successful authentication
 
 ### Authorization
 
@@ -1748,6 +1786,13 @@ At minimum, create automated coverage for:
 * logout
 * protected route without session
 * invalid credentials
+* state-changing request without CSRF token is rejected
+* invalid CSRF token is rejected
+* valid CSRF token allows the authenticated mutation
+* CSRF token from another session is rejected
+* session is rotated on successful login
+* logout invalidates the previous session
+* session cookie uses the required security attributes
 
 ## Event approval
 
@@ -2008,73 +2053,79 @@ The most important test should reproduce the complete platform lifecycle.
 
 8. Confirm creator becomes Organizer
 
-9. Organizer configures event
+9. Confirm authenticated state-changing requests require a valid CSRF token
 
-10. Confirm event is DRAFT before start_at
+10. Confirm login establishes a new authenticated session
 
-11. Confirm Organizer can modify event structure while event is DRAFT
+11. Confirm logout invalidates the session
 
-12. Confirm event becomes ONGOING at start_at
+12. Organizer configures event
 
-13. Confirm structural event configuration is frozen at start_at
+13. Confirm event is DRAFT before start_at
 
-14. Confirm Organizer cannot modify frozen event structure while ONGOING
+14. Confirm Organizer can modify event structure while event is DRAFT
 
-15. Confirm event becomes ENDED at end_at
+15. Confirm event becomes ONGOING at start_at
 
-16. Organizer assigns a Judge
+16. Confirm structural event configuration is frozen at start_at
 
-17. Confirm Judge membership is created
+17. Confirm Organizer cannot modify frozen event structure while ONGOING
 
-18. Confirm Judge can access event/project context without participant permissions
+18. Confirm event becomes ENDED at end_at
 
-19. Participant joins event
+19. Organizer assigns a Judge
 
-20. Participant creates team
+20. Confirm Judge membership is created
 
-21. Confirm team creation creates both the team and owner membership atomically
+21. Confirm Judge can access event/project context without participant permissions
 
-22. Participant generates invite
+22. Participant joins event
 
-23. Confirm team owner can revoke the outstanding invite
+23. Participant creates team
 
-24. Second user opens invite while logged out
+24. Confirm team creation creates both the team and owner membership atomically
 
-25. Second user signs up/logs in
+25. Participant generates invite
 
-26. Invite context survives authentication
+26. Confirm team owner can revoke the outstanding invite
 
-27. Second user explicitly accepts invite
+27. Second user opens invite while logged out
 
-28. Team reaches valid membership state
+28. Second user signs up/logs in
 
-29. Team creates project
+29. Invite context survives authentication
 
-30. Team edits project
+30. Second user explicitly accepts invite
 
-31. Team submits project
+31. Team reaches valid membership state
 
-32. Team reopens and resubmits before deadline
+32. Team creates project
 
-33. Before the submission deadline, confirm project images are not publicly accessible
+33. Team edits project
 
-34. Confirm authorized project users can access their private images
+34. Team submits project
 
-35. Current server time reaches the submission deadline
+35. Team reopens and resubmits before deadline
 
-36. Confirm project mutations are rejected at the exact deadline boundary
+36. Before the submission deadline, confirm project images are not publicly accessible
 
-37. Confirm project is effectively locked
+37. Confirm authorized project users can access their private images
 
-38. Confirm team changes are locked
+38. Current server time reaches the submission deadline
 
-39. Confirm submitted project is publicly visible
+39. Confirm project mutations are rejected at the exact deadline boundary
 
-40. Confirm gallery search/filter works
+40. Confirm project is effectively locked
 
-41. Confirm unauthorized users cannot modify protected resources
+41. Confirm team changes are locked
 
-42. Confirm Judge can access event/project context without participant editing permissions
+42. Confirm submitted project is publicly visible
+
+43. Confirm gallery search/filter works
+
+44. Confirm unauthorized users cannot modify protected resources
+
+45. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2238,6 +2289,8 @@ The implementation is complete when:
 20. Cross-event authorization is enforced server-side.
 21. The complete lifecycle works from a clean local installation.
 22. The implementation remains limited to the functionality specified in this document.
+23. State-changing authenticated requests are protected against CSRF.
+24. Session cookies use appropriate security attributes and sessions are invalidated on logout.
 
 ---
 
