@@ -522,6 +522,12 @@ The owner cannot transfer ownership.
 
 A participant can belong to only one team in a given event.
 
+Team creation must be performed atomically.
+
+Creating a team and creating its owner/captain membership must occur in the same database transaction.
+
+If either operation fails, the entire team creation operation must be rolled back.
+
 ---
 
 ## Team size
@@ -586,6 +592,14 @@ After signup/login, the server must revalidate:
 * team capacity
 * submission deadline
 
+Invitation acceptance must be performed atomically.
+
+The server must validate the invitation, verify event membership, verify existing team membership, verify team capacity, and create the team membership within one database transaction.
+
+The capacity check and membership creation must occur within the same transaction so concurrent requests cannot bypass the configured team size.
+
+If the membership cannot be created, the transaction must roll back without creating a partial membership state.
+
 Do not rely only on frontend state to preserve the invitation.
 
 ---
@@ -617,6 +631,14 @@ The owner cannot leave their own team.
 Each team can have exactly one project for an event.
 
 Any member of the team can edit the shared project.
+
+Project creation and submission state changes must be performed atomically.
+
+Project creation must verify the team/event relationship and create the project within one database transaction.
+
+Project submission must validate all required project data and custom answers before changing the project to SUBMITTED.
+
+If any required validation or database operation fails, no partial submission state may be persisted.
 
 There is no separate project for each team member.
 
@@ -1310,6 +1332,10 @@ DELETE /api/teams/:teamId
 
 Deadline rules apply to all participant-controlled team mutations.
 
+Team creation, invite acceptance, member removal, and team deletion must use database transactions whenever multiple related records are created, updated, or deleted.
+
+The server must perform authorization, deadline checks, capacity checks, and the related database mutation as one atomic operation where applicable.
+
 **---**
 
 ## Projects
@@ -1339,6 +1365,12 @@ Do not return the underlying filesystem path to clients.
 Do not expose the upload directory through a public static route.
 
 Every mutation must verify team membership and deadline state.
+
+Project creation, submission, reopening, and resubmission must use database transactions when the operation changes multiple related records or requires validation followed by a state transition.
+
+Validation and state mutation must be completed against the same authoritative server state.
+
+A failed transaction must not leave a partially updated project, answer set, or submission state.
 
 Deadline-dependent project mutations must evaluate the submission deadline using the server's current time at the moment of the request.
 
@@ -1722,6 +1754,10 @@ At minimum, create automated coverage for:
 * one team per event
 * expired invite
 * revoked invite
+* concurrent team creation and membership operations do not create invalid partial state
+* concurrent invite acceptance cannot exceed max team size
+* failed team creation rolls back all related records
+* failed invite acceptance does not create a partial membership
 
 ## Projects
 
@@ -1732,6 +1768,8 @@ At minimum, create automated coverage for:
 * edit after reopening
 * resubmit
 * required custom question validation
+* failed project submission does not leave the project partially submitted
+* failed reopen/resubmit operation does not leave an inconsistent project state
 
 ## Deadline
 
@@ -1934,44 +1972,47 @@ The most important test should reproduce the complete platform lifecycle.
 
 17. Participant creates team
 
-18. Participant generates invite
+18. Confirm team creation creates both the team and owner membership atomically
 
-19. Second user opens invite while logged out
+19. Participant generates invite
 
-20. Second user signs up/logs in
+20. Second user opens invite while logged out
 
-21. Invite context survives authentication
+21. Second user signs up/logs in
 
-22. Second user explicitly accepts invite
+22. Invite context survives authentication
 
-23. Team reaches valid membership state
+23. Second user explicitly accepts invite
 
-24. Team creates project
+24. Team reaches valid membership state
 
-25. Team edits project
+25. Team creates project
 
-26. Team submits project
+26. Team edits project
 
-27. Team reopens and resubmits before deadline
+27. Team submits project
 
-28. Before the submission deadline, confirm project images are not publicly accessible
-29. Confirm authorized project users can access their private images
+28. Team reopens and resubmits before deadline
 
-30. Current server time reaches the submission deadline
+29. Before the submission deadline, confirm project images are not publicly accessible
 
-31. Confirm project mutations are rejected at the exact deadline boundary
+30. Confirm authorized project users can access their private images
 
-32. Confirm project is effectively locked
+31. Current server time reaches the submission deadline
 
-33. Confirm team changes are locked
+32. Confirm project mutations are rejected at the exact deadline boundary
 
-34. Confirm submitted project is publicly visible
+33. Confirm project is effectively locked
 
-35. Confirm gallery search/filter works
+34. Confirm team changes are locked
 
-36. Confirm unauthorized users cannot modify protected resources
+35. Confirm submitted project is publicly visible
 
-37. Confirm Judge can access event/project context without participant editing permissions
+36. Confirm gallery search/filter works
+
+37. Confirm unauthorized users cannot modify protected resources
+
+38. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2124,13 +2165,14 @@ The implementation is complete when:
 11. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
 12. Local project images persist across application restarts when persistent storage is mounted.
 13. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
-14. Submitted projects become publicly visible after the deadline.
-15. The public gallery supports search and filtering.
-16. Organizers can assign and remove event-scoped Judges.
-17. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-18. Cross-event authorization is enforced server-side.
-19. The complete lifecycle works from a clean local installation.
-20. The implementation remains limited to the functionality specified in this document.
+14. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
+15. Submitted projects become publicly visible after the deadline.
+16. The public gallery supports search and filtering.
+17. Organizers can assign and remove event-scoped Judges.
+18. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+19. Cross-event authorization is enforced server-side.
+20. The complete lifecycle works from a clean local installation.
+21. The implementation remains limited to the functionality specified in this document.
 
 ---
 
