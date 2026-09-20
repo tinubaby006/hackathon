@@ -587,6 +587,9 @@ After signup/login, the server must revalidate:
 * invitation validity
 * expiration
 * revocation
+A revoked invitation must always be rejected by the server, even when the invitation token itself is otherwise valid.
+
+Revocation is represented by `revoked_at` being set on the invitation record.
 * event membership
 * existing team membership
 * team capacity
@@ -611,6 +614,7 @@ Before the submission deadline:
 * team owner can remove members
 * team owner can delete the team
 * invitations can be created/accepted
+* team owner can revoke outstanding invitations
 * eligible participants can join
 
 After the submission deadline:
@@ -1328,7 +1332,20 @@ POST   /api/teams/:teamId/invites
 POST   /api/team-invites/:token/accept
 DELETE /api/teams/:teamId/members/:userId
 DELETE /api/teams/:teamId
+DELETE /api/team-invites/:inviteId
 ```
+
+Invite revocation must:
+
+* require authentication
+* require the requester to be the owner/captain of the associated team
+* verify that the invite exists
+* verify that the invite belongs to the specified team
+* mark the invite as revoked using `revoked_at`
+* prevent the invite from being accepted after revocation
+* be subject to the submission deadline
+
+Revoking an invite must not remove existing team members.
 
 Deadline rules apply to all participant-controlled team mutations.
 
@@ -1754,6 +1771,10 @@ At minimum, create automated coverage for:
 * one team per event
 * expired invite
 * revoked invite
+* team owner can revoke an outstanding invite
+* revoked invite cannot be accepted
+* revoking an invite does not remove existing team members
+* non-owner cannot revoke another team's invite
 * concurrent team creation and membership operations do not create invalid partial state
 * concurrent invite acceptance cannot exceed max team size
 * failed team creation rolls back all related records
@@ -1976,43 +1997,45 @@ The most important test should reproduce the complete platform lifecycle.
 
 19. Participant generates invite
 
-20. Second user opens invite while logged out
+20. Confirm team owner can revoke the outstanding invite
 
-21. Second user signs up/logs in
+21. Second user opens invite while logged out
 
-22. Invite context survives authentication
+22. Second user signs up/logs in
 
-23. Second user explicitly accepts invite
+23. Invite context survives authentication
 
-24. Team reaches valid membership state
+24. Second user explicitly accepts invite
 
-25. Team creates project
+25. Team reaches valid membership state
 
-26. Team edits project
+26. Team creates project
 
-27. Team submits project
+27. Team edits project
 
-28. Team reopens and resubmits before deadline
+28. Team submits project
 
-29. Before the submission deadline, confirm project images are not publicly accessible
+29. Team reopens and resubmits before deadline
 
-30. Confirm authorized project users can access their private images
+30. Before the submission deadline, confirm project images are not publicly accessible
 
-31. Current server time reaches the submission deadline
+31. Confirm authorized project users can access their private images
 
-32. Confirm project mutations are rejected at the exact deadline boundary
+32. Current server time reaches the submission deadline
 
-33. Confirm project is effectively locked
+33. Confirm project mutations are rejected at the exact deadline boundary
 
-34. Confirm team changes are locked
+34. Confirm project is effectively locked
 
-35. Confirm submitted project is publicly visible
+35. Confirm team changes are locked
 
-36. Confirm gallery search/filter works
+36. Confirm submitted project is publicly visible
 
-37. Confirm unauthorized users cannot modify protected resources
+37. Confirm gallery search/filter works
 
-38. Confirm Judge can access event/project context without participant editing permissions
+38. Confirm unauthorized users cannot modify protected resources
+
+39. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2149,6 +2172,8 @@ Before considering the implementation complete, verify:
 ---
 
 # 43. Definition of Done
+
+Organizers/Team owners can revoke outstanding team invitations, and revoked invitations cannot be accepted.
 
 The implementation is complete when:
 
