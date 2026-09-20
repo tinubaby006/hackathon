@@ -437,6 +437,24 @@ start_at < submission_deadline <= end_at
 
 Maximum team size must be configurable per event.
 
+An approved Organizer may modify event structure only while the event lifecycle is DRAFT.
+
+The following fields are considered event structure:
+
+start date/time
+submission deadline
+end date/time
+maximum team size
+tracks
+prizes
+custom project questions
+
+Once the event reaches ONGOING, these fields are frozen and cannot be created, removed, reordered, or modified.
+
+The server must reject structural event updates when the effective lifecycle is ONGOING or ENDED.
+
+The server's current time is authoritative for determining whether the structure is frozen.
+
 Do not hard-code the DOGFOOD event's own team size as a platform-wide rule.
 
 ---
@@ -1165,6 +1183,15 @@ The event lifecycle status is determined by the configured dates and server time
 Clients must not directly set or transition `status`.
 
 Protected Organizer operations require an approved `ORGANIZER` membership for the event.
+
+For PATCH /api/events/:eventId:
+
+pending proposals may be edited by their creator
+approved events may have their event structure configured while the lifecycle is DRAFT
+structural changes are rejected once the effective lifecycle is ONGOING
+structural changes remain rejected while the lifecycle is ENDED
+the backend must determine the effective lifecycle from server time
+the client must not bypass the freeze by sending a lifecycle/status value
 
 **---**
 
@@ -1940,6 +1967,12 @@ Build in this order.
 * cross-event isolation tests
 * end-to-end lifecycle test
 
+Organizer can modify event structure while the approved event is DRAFT
+Organizer cannot modify start time, submission deadline, end time, maximum team size, tracks, prizes, or custom questions once the event reaches ONGOING
+structural event updates remain rejected after ENDED
+exact start_at boundary is treated as ONGOING
+rejected structural updates do not partially modify the event
+
 ### Phase 9 — Final Packaging
 
 Only after the application works:
@@ -1979,63 +2012,69 @@ The most important test should reproduce the complete platform lifecycle.
 
 10. Confirm event is DRAFT before start_at
 
-11. Confirm event becomes ONGOING at start_at
+11. Confirm Organizer can modify event structure while event is DRAFT
 
-12. Confirm event becomes ENDED at end_at
+12. Confirm event becomes ONGOING at start_at
 
-13. Organizer assigns a Judge
+13. Confirm structural event configuration is frozen at start_at
 
-14. Confirm Judge membership is created
+14. Confirm Organizer cannot modify frozen event structure while ONGOING
 
-15. Confirm Judge can access event/project context without participant permissions
+15. Confirm event becomes ENDED at end_at
 
-16. Participant joins event
+16. Organizer assigns a Judge
 
-17. Participant creates team
+17. Confirm Judge membership is created
 
-18. Confirm team creation creates both the team and owner membership atomically
+18. Confirm Judge can access event/project context without participant permissions
 
-19. Participant generates invite
+19. Participant joins event
 
-20. Confirm team owner can revoke the outstanding invite
+20. Participant creates team
 
-21. Second user opens invite while logged out
+21. Confirm team creation creates both the team and owner membership atomically
 
-22. Second user signs up/logs in
+22. Participant generates invite
 
-23. Invite context survives authentication
+23. Confirm team owner can revoke the outstanding invite
 
-24. Second user explicitly accepts invite
+24. Second user opens invite while logged out
 
-25. Team reaches valid membership state
+25. Second user signs up/logs in
 
-26. Team creates project
+26. Invite context survives authentication
 
-27. Team edits project
+27. Second user explicitly accepts invite
 
-28. Team submits project
+28. Team reaches valid membership state
 
-29. Team reopens and resubmits before deadline
+29. Team creates project
 
-30. Before the submission deadline, confirm project images are not publicly accessible
+30. Team edits project
 
-31. Confirm authorized project users can access their private images
+31. Team submits project
 
-32. Current server time reaches the submission deadline
+32. Team reopens and resubmits before deadline
 
-33. Confirm project mutations are rejected at the exact deadline boundary
+33. Before the submission deadline, confirm project images are not publicly accessible
 
-34. Confirm project is effectively locked
+34. Confirm authorized project users can access their private images
 
-35. Confirm team changes are locked
+35. Current server time reaches the submission deadline
 
-36. Confirm submitted project is publicly visible
+36. Confirm project mutations are rejected at the exact deadline boundary
 
-37. Confirm gallery search/filter works
+37. Confirm project is effectively locked
 
-38. Confirm unauthorized users cannot modify protected resources
+38. Confirm team changes are locked
 
-39. Confirm Judge can access event/project context without participant editing permissions
+39. Confirm submitted project is publicly visible
+
+40. Confirm gallery search/filter works
+
+41. Confirm unauthorized users cannot modify protected resources
+
+42. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2183,21 +2222,22 @@ The implementation is complete when:
 4. Approval automatically makes the creator the Organizer of that event.
 5. The Organizer can configure and run the event.
 6. Event lifecycle status is correctly derived from approval state and configured dates.
-7. Participants can form teams using invitation links.
-8. Invitation state survives signup/login.
-9. Teams can create and edit a shared project.
-10. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
-11. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
-12. Local project images persist across application restarts when persistent storage is mounted.
-13. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
-14. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
-15. Submitted projects become publicly visible after the deadline.
-16. The public gallery supports search and filtering.
-17. Organizers can assign and remove event-scoped Judges.
-18. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-19. Cross-event authorization is enforced server-side.
-20. The complete lifecycle works from a clean local installation.
-21. The implementation remains limited to the functionality specified in this document.
+7. Event structure can be configured during DRAFT and is frozen when the event becomes ONGOING.
+8. Participants can form teams using invitation links.
+9. Invitation state survives signup/login.
+10. Teams can create and edit a shared project.
+11. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
+12. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
+13. Local project images persist across application restarts when persistent storage is mounted.
+14. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
+15. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
+16. Submitted projects become publicly visible after the deadline.
+17. The public gallery supports search and filtering.
+18. Organizers can assign and remove event-scoped Judges.
+19. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+20. Cross-event authorization is enforced server-side.
+21. The complete lifecycle works from a clean local installation.
+22. The implementation remains limited to the functionality specified in this document.
 
 ---
 
