@@ -2345,6 +2345,36 @@ Before considering the implementation complete, verify:
 * [ ] Input validation exists
 * [ ] Upload validation exists
 
+### DOGFOOD Compliance
+
+* [ ] Tier 1 Core functionality is complete and working
+* [ ] The application is self-hostable
+* [ ] `docker compose up` starts the portal from a clean checkout
+* [ ] The application works locally without hosted authentication
+* [ ] The application works locally without a hosted database
+* [ ] The application works locally without cloud storage
+* [ ] The application has no external runtime API dependency
+* [ ] Offline laptop operation is supported after local dependencies/images are available
+* [ ] All required application code was written during the 72-hour hackathon window
+* [ ] Frameworks, libraries, boilerplate, and permitted AI assistance remain within the hackathon rules
+* [ ] The project uses an OSI-approved open source license
+* [ ] The repository is public on GitHub
+* [ ] The submitted repository contains the complete runnable implementation
+* [ ] The required submission deadline is respected: September 28, 18:00 UTC
+* [ ] Core correctness is prioritized over incomplete stretch functionality
+* [ ] The implementation does not require functionality from higher tiers before Tier 1 Core is complete
+
+### DOGFOOD Judging Alignment
+
+The implementation should prioritize the documented judging criteria:
+
+* Tier completion and correctness
+* Judging integrity
+* Adoptability and operability
+* Code quality and innovation
+
+Correctness of the required Core lifecycle takes priority over unfinished higher-tier features.
+
 ---
 
 # 43. Definition of Done
@@ -2381,6 +2411,7 @@ The implementation is complete when:
 25. State-changing authenticated requests are protected against CSRF.
 26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
 27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
+28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
 
 ---
 
