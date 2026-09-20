@@ -373,50 +373,45 @@ Only an Admin may approve an event.
 
 Use two concepts:
 
-### Approval state
-
-```text
+Approval state
 PENDING
 APPROVED
-```
+Event lifecycle
 
-### Event lifecycle
+The event lifecycle is derived from the approval state and the event's configured dates.
 
-```text
+For an approved event:
+
+Before start_at
+    ↓
 DRAFT
+
+start_at <= current_time < end_at
+    ↓
 ONGOING
+
+current_time >= end_at
+    ↓
 ENDED
-```
 
-An event therefore may initially be:
+An event must satisfy:
 
-```text
-approval_status = PENDING
-status = DRAFT
-```
+start_at < submission_deadline <= end_at
 
-After Admin approval:
+Lifecycle rules:
 
-```text
-approval_status = APPROVED
-status = DRAFT
-```
+PENDING approval status always means the event has not yet been approved.
+An approved event remains DRAFT until start_at.
+At or after start_at, an approved event is ONGOING.
+At or after end_at, an approved event is ENDED.
+An event must never become ONGOING before it is approved.
+An event must never return from ENDED to DRAFT or ONGOING.
+The server's current time is authoritative.
+The client must not be able to manually set the lifecycle status.
+No background scheduler is required to transition events.
+The backend should determine the effective lifecycle status whenever the event is read or a lifecycle-dependent operation is performed.
 
-The Organizer can then configure the event.
-
-When the event is active:
-
-```text
-status = ONGOING
-```
-
-After the event ends:
-
-```text
-status = ENDED
-```
-
-Do not allow an event to become `ONGOING` before it has been approved.
+The submission deadline is independent of the event lifecycle status and is enforced separately according to the submission deadline rules.
 
 ---
 
@@ -1113,6 +1108,10 @@ Creation creates a pending event proposal.
 
 The creator may edit their own pending proposal.
 
+The event lifecycle status is determined by the configured dates and server time.
+
+Clients must not directly set or transition `status`.
+
 Protected Organizer operations require an approved `ORGANIZER` membership for the event.
 
 **---**
@@ -1637,6 +1636,16 @@ At minimum, create automated coverage for:
 * creator becomes Organizer
 * approved event becomes manageable by creator
 
+## Event lifecycle
+
+* approved event before `start_at` is `DRAFT`
+* event at `start_at` is `ONGOING`
+* event between `start_at` and `end_at` is `ONGOING`
+* event at `end_at` is `ENDED`
+* event after `end_at` remains `ENDED`
+* unapproved event never becomes `ONGOING`
+* client cannot manually change lifecycle status
+
 ## Judge assignment
 
 * Organizer can assign an existing user as Judge
@@ -1851,49 +1860,55 @@ The most important test should reproduce the complete platform lifecycle.
 
 9. Organizer configures event
 
-10. Organizer assigns a Judge
+10. Confirm event is DRAFT before start_at
 
-11. Confirm Judge membership is created
+11. Confirm event becomes ONGOING at start_at
 
-12. Confirm Judge can access event/project context without participant permissions
+12. Confirm event becomes ENDED at end_at
 
-13. Participant joins event
+13. Organizer assigns a Judge
 
-14. Participant creates team
+14. Confirm Judge membership is created
 
-15. Participant generates invite
+15. Confirm Judge can access event/project context without participant permissions
 
-16. Second user opens invite while logged out
+16. Participant joins event
 
-17. Second user signs up/logs in
+17. Participant creates team
 
-18. Invite context survives authentication
+18. Participant generates invite
 
-19. Second user explicitly accepts invite
+19. Second user opens invite while logged out
 
-20. Team reaches valid membership state
+20. Second user signs up/logs in
 
-21. Team creates project
+21. Invite context survives authentication
 
-22. Team edits project
+22. Second user explicitly accepts invite
 
-23. Team submits project
+23. Team reaches valid membership state
 
-24. Team reopens and resubmits before deadline
+24. Team creates project
 
-25. Deadline passes
+25. Team edits project
 
-26. Confirm project is locked
+26. Team submits project
 
-27. Confirm team changes are locked
+27. Team reopens and resubmits before deadline
 
-28. Confirm submitted project is publicly visible
+28. Deadline passes
 
-29. Confirm gallery search/filter works
+29. Confirm project is locked
 
-30. Confirm unauthorized users cannot modify protected resources
+30. Confirm team changes are locked
 
-31. Confirm Judge can access event/project context without participant editing permissions
+31. Confirm submitted project is publicly visible
+
+32. Confirm gallery search/filter works
+
+33. Confirm unauthorized users cannot modify protected resources
+
+34. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2038,19 +2053,20 @@ The implementation is complete when:
 3. An Admin can approve it.
 4. Approval automatically makes the creator the Organizer of that event.
 5. The Organizer can configure and run the event.
-6. Participants can form teams using invitation links.
-7. Invitation state survives signup/login.
-8. Teams can create and edit a shared project.
-9. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
-10. The backend strictly locks projects and team changes after the deadline.
-11. Local project images persist across application restarts when persistent storage is mounted.
-12. Submitted projects become publicly visible after the deadline.
-13. The public gallery supports search and filtering.
-14. Organizers can assign and remove event-scoped Judges.
-15. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-16. Cross-event authorization is enforced server-side.
-17. The complete lifecycle works from a clean local installation.
-18. The implementation remains limited to the functionality specified in this document.
+6. Event lifecycle status is correctly derived from approval state and configured dates.
+7. Participants can form teams using invitation links.
+8. Invitation state survives signup/login.
+9. Teams can create and edit a shared project.
+10. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
+11. The backend strictly locks projects and team changes after the deadline.
+12. Local project images persist across application restarts when persistent storage is mounted.
+13. Submitted projects become publicly visible after the deadline.
+14. The public gallery supports search and filtering.
+15. Organizers can assign and remove event-scoped Judges.
+16. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+17. Cross-event authorization is enforced server-side.
+18. The complete lifecycle works from a clean local installation.
+19. The implementation remains limited to the functionality specified in this document.
 
 ---
 
