@@ -1173,6 +1173,55 @@ Constraint:
 UNIQUE(project_id, question_id)
 ```
 
+### Database Integrity Constraints
+
+The database should enforce integrity rules wherever practical.
+
+Required constraints include:
+
+* users.email must be unique
+* event_memberships must enforce UNIQUE(event_id, user_id)
+* projects must enforce UNIQUE(event_id, team_id)
+* project_answers must enforce UNIQUE(project_id, question_id)
+* event dates must satisfy start_at < submission_deadline <= end_at
+* max_team_size must be at least 1
+* event approval_status must contain only PENDING or APPROVED
+* event lifecycle status must contain only DRAFT, ONGOING, or ENDED
+* event membership role must contain only PARTICIPANT, JUDGE, or ORGANIZER
+* project status must contain only DRAFT, SUBMITTED, or LOCKED
+* custom question type must contain only SHORT_TEXT, LONG_TEXT, or URL
+* required question values must be valid boolean values
+* sort_order values must be valid non-negative ordering values
+* invite token hashes should be unique
+* foreign-key relationships must be enforced
+
+The database must enable foreign-key enforcement.
+
+Application logic remains responsible for rules that depend on authenticated users, event roles, server time, or multi-record business logic.
+
+In particular, the rule that a participant may belong to only one team within an event must still be enforced transactionally by the application and database design.
+
+### Required Indexes
+
+Create indexes for the primary event-scoped and frequently queried relationships:
+
+* sessions(user_id, expires_at)
+* event_memberships(event_id, role)
+* event_memberships(user_id)
+* event_tracks(event_id)
+* event_prizes(event_id)
+* event_questions(event_id, sort_order)
+* teams(event_id)
+* team_members(team_id)
+* team_members(user_id)
+* team_invites(team_id, revoked_at, expires_at)
+* projects(event_id, status)
+* project_images(project_id, sort_order)
+* project_technologies(project_id)
+* project_answers(project_id)
+
+Indexes must support event isolation, membership checks, team/project lookups, invitation validation, and public gallery queries without changing the required authorization rules.
+
 ---
 
 # 25. API Surface
@@ -1999,6 +2048,17 @@ Test both:
 * migrations/startup initialization complete successfully
 * application is usable through the local containerized environment
 
+**## Database integrity**
+
+* duplicate user email is rejected
+* duplicate event membership for the same user/event is rejected
+* duplicate project for the same team/event is rejected
+* duplicate answer for the same project/question is rejected
+* invalid event date ordering is rejected
+* invalid enum/status values are rejected
+* foreign-key violations are rejected
+* database constraints remain active in the local SQLite environment
+
 ---
 
 # 37. Seed Data
@@ -2412,6 +2472,7 @@ The implementation is complete when:
 26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
 27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
 28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
+29. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
 
 ---
 
