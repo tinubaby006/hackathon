@@ -2047,8 +2047,13 @@ Test both:
 * uploaded images remain available after container restart
 * migrations/startup initialization complete successfully
 * application is usable through the local containerized environment
+* clean database startup creates the required seed data
+* restarting the application does not duplicate seed records
+* restarting the container does not delete existing application data
+* demo seed data is not automatically reapplied over existing user-created data
+* production/non-demo startup does not reset or overwrite an existing database
 
-**## Database integrity**
+## Database integrity
 
 * duplicate user email is rejected
 * duplicate event membership for the same user/event is rejected
@@ -2082,9 +2087,28 @@ Include:
 * prizes
 * custom questions
 
+Seed behavior must be deterministic and safe.
+
+For a clean local database:
+
+* the seed process must create the required demonstration data
+* the application must be immediately usable after startup
+* the seeded relationships must be internally consistent
+
+For an existing local database:
+
+* seeding must be idempotent
+* repeated startup must not duplicate seed records
+* existing user-created data must not be deleted or overwritten
+* existing uploaded files must not be removed by seeding
+
 Do not make the seed data dependent on external services.
 
-Document development credentials clearly for local use.
+Demo/development credentials must be documented clearly for local use.
+
+Production or non-demo deployments must not automatically reset the database or overwrite existing application data with demo seed data.
+
+Demo seed initialization may be enabled explicitly for a fresh local environment.
 
 ---
 
@@ -2324,6 +2348,12 @@ Docker and the local runtime are part of the project's development baseline, not
 
 The implementation must remain usable after application and container restarts.
 
+The clean local startup path may initialize the required demonstration seed data.
+
+The seed process must be safe to run repeatedly and must not reset an existing database.
+
+The local demonstration environment and production/non-demo environments must not have the same automatic data-reset behavior.
+
 ---
 
 # 42. Final Verification Checklist
@@ -2473,6 +2503,7 @@ The implementation is complete when:
 27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
 28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
 29. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
+30. Seed initialization is deterministic and idempotent: a clean local installation receives the required demonstration data, repeated startup does not duplicate or overwrite existing data, and production/non-demo environments do not automatically reset application data.
 
 ---
 
