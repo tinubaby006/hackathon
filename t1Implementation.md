@@ -131,6 +131,27 @@ Required:
 * session expiration
 * logout invalidation
 
+CSRF protection must be implemented for browser-based state-changing requests.
+
+State-changing requests such as POST, PATCH, PUT, and DELETE must require a valid CSRF token associated with the authenticated session.
+
+The CSRF token must be generated using a cryptographically secure random source and must not be accepted from an untrusted URL parameter.
+
+The server must validate the CSRF token before performing the protected mutation.
+
+Session cookies must use:
+
+- HttpOnly
+- SameSite=Lax or stricter
+- Path=/
+- Secure when the application is served over HTTPS
+
+The session identifier must be opaque and unpredictable.
+
+A successful login must establish a new authenticated session rather than trusting a session created before authentication.
+
+Logout must invalidate the server-side session so the previous session identifier cannot be reused.
+
 Do not use JWT authentication.
 
 Do not require OAuth.
@@ -386,11 +407,11 @@ Before start_at
     ↓
 DRAFT
 
-start_at <= current_time < end_at
+start_at <= now() < end_at
     ↓
 ONGOING
 
-current_time >= end_at
+now() >= end_at
     ↓
 ENDED
 
@@ -412,6 +433,25 @@ No background scheduler is required to transition events.
 The backend should determine the effective lifecycle status whenever the event is read or a lifecycle-dependent operation is performed.
 
 The submission deadline is independent of the event lifecycle status and is enforced separately according to the submission deadline rules.
+
+### Authoritative server clock
+
+All backend time-dependent decisions must use one server-side clock abstraction, such as `now()`.
+
+The production implementation returns the current server time.
+
+Business logic must not call `new Date()` or equivalent wall-clock APIs directly for lifecycle or deadline decisions.
+
+The same clock source must be used for:
+- event lifecycle derivation
+- submission deadline enforcement
+- team/invite mutations affected by the deadline
+- project mutations affected by the deadline
+- project/image visibility rules affected by the deadline
+
+Tests must be able to inject a deterministic clock value.
+
+The client must never provide or override the authoritative current time.
 
 ---
 
@@ -436,6 +476,24 @@ start_at < submission_deadline <= end_at
 ```
 
 Maximum team size must be configurable per event.
+
+An approved Organizer may modify event structure only while the event lifecycle is DRAFT.
+
+The following fields are considered event structure:
+
+start date/time
+submission deadline
+end date/time
+maximum team size
+tracks
+prizes
+custom project questions
+
+Once the event reaches ONGOING, these fields are frozen and cannot be created, removed, reordered, or modified.
+
+The server must reject structural event updates when the effective lifecycle is ONGOING or ENDED.
+
+The server's current time is authoritative for determining whether the structure is frozen.
 
 Do not hard-code the DOGFOOD event's own team size as a platform-wide rule.
 
@@ -522,6 +580,12 @@ The owner cannot transfer ownership.
 
 A participant can belong to only one team in a given event.
 
+Team creation must be performed atomically.
+
+Creating a team and creating its owner/captain membership must occur in the same database transaction.
+
+If either operation fails, the entire team creation operation must be rolled back.
+
 ---
 
 ## Team size
@@ -581,10 +645,21 @@ After signup/login, the server must revalidate:
 * invitation validity
 * expiration
 * revocation
+A revoked invitation must always be rejected by the server, even when the invitation token itself is otherwise valid.
+
+Revocation is represented by `revoked_at` being set on the invitation record.
 * event membership
 * existing team membership
 * team capacity
 * submission deadline
+
+Invitation acceptance must be performed atomically.
+
+The server must validate the invitation, verify event membership, verify existing team membership, verify team capacity, and create the team membership within one database transaction.
+
+The capacity check and membership creation must occur within the same transaction so concurrent requests cannot bypass the configured team size.
+
+If the membership cannot be created, the transaction must roll back without creating a partial membership state.
 
 Do not rely only on frontend state to preserve the invitation.
 
@@ -597,6 +672,7 @@ Before the submission deadline:
 * team owner can remove members
 * team owner can delete the team
 * invitations can be created/accepted
+* team owner can revoke outstanding invitations
 * eligible participants can join
 
 After the submission deadline:
@@ -617,6 +693,14 @@ The owner cannot leave their own team.
 Each team can have exactly one project for an event.
 
 Any member of the team can edit the shared project.
+
+Project creation and submission state changes must be performed atomically.
+
+Project creation must verify the team/event relationship and create the project within one database transaction.
+
+Project submission must validate all required project data and custom answers before changing the project to SUBMITTED.
+
+If any required validation or database operation fails, no partial submission state may be persisted.
 
 There is no separate project for each team member.
 
@@ -696,10 +780,18 @@ The upload implementation must be compatible with persistent container storage.
 Example deployment expectation:
 
 ```text
-./uploads:/app/public/uploads
+./uploads:/app/data/uploads
 ```
 
 The exact Docker configuration can be finalized during packaging, but the application must already use a persistent-volume-compatible upload directory.
+
+Uploaded project images must never be exposed through a directly guessable static file path.
+
+Image access must be controlled by the application:
+
+* before the submission deadline, project images are private and accessible only to authorized project/team users and appropriate event administration users
+* after the submission deadline, images belonging to valid submitted public projects may be served publicly
+* images belonging to non-submitted projects must remain inaccessible to unauthenticated users
 
 Required validation:
 
@@ -728,27 +820,35 @@ After the deadline, participants must not be able to:
 
 Do not rely on the UI disabling buttons.
 
-Every relevant backend operation must independently check the event deadline.
+A project is considered effectively LOCKED once now() >= submission_deadline
 
 The server's current time is authoritative.
 
-The submission deadline must be evaluated directly from the server's current time.
+All deadline checks must use the single server-side clock abstraction, such as `now()`.
 
 Use:
 
-current_time < submission_deadline
+now() < submission_deadline
+
     → submission-dependent mutations are allowed
 
-current_time >= submission_deadline
+now() >= submission_deadline
+
     → submission-dependent mutations are rejected
 
 The backend must not rely on a stored project or event status to determine whether the deadline has passed.
 
-The deadline check must run on every participant-controlled mutation that is restricted by the submission deadline.
+Every participant-controlled mutation restricted by the submission deadline must independently evaluate the deadline using the authoritative server clock.
 
 No background scheduler or cron job is required for deadline enforcement.
 
-A project is considered effectively LOCKED once current_time >= submission_deadline, even if a persisted status field has not yet been updated.
+A project is considered effectively LOCKED once:
+
+now() >= submission_deadline
+
+even if a persisted status field has not yet been updated.
+
+Tests must be able to inject a deterministic clock value so deadline behavior can be tested without waiting for real time.
 
 ---
 
@@ -871,7 +971,12 @@ user_id
 expires_at
 created_at
 last_used_at
+csrf_token_hash
 ```
+
+csrf_token_hash stores only a secure hash of the session's CSRF token.
+
+The raw CSRF token must never be persisted in the database.
 
 ---
 
@@ -1095,11 +1200,62 @@ Constraint:
 UNIQUE(project_id, question_id)
 ```
 
+### Database Integrity Constraints
+
+The database should enforce integrity rules wherever practical.
+
+Required constraints include:
+
+* users.email must be unique
+* event_memberships must enforce UNIQUE(event_id, user_id)
+* projects must enforce UNIQUE(event_id, team_id)
+* project_answers must enforce UNIQUE(project_id, question_id)
+* event dates must satisfy start_at < submission_deadline <= end_at
+* max_team_size must be at least 1
+* event approval_status must contain only PENDING or APPROVED
+* event lifecycle status must contain only DRAFT, ONGOING, or ENDED
+* event membership role must contain only PARTICIPANT, JUDGE, or ORGANIZER
+* project status must contain only DRAFT, SUBMITTED, or LOCKED
+* custom question type must contain only SHORT_TEXT, LONG_TEXT, or URL
+* required question values must be valid boolean values
+* sort_order values must be valid non-negative ordering values
+* invite token hashes should be unique
+* foreign-key relationships must be enforced
+
+The database must enable foreign-key enforcement.
+
+Application logic remains responsible for rules that depend on authenticated users, event roles, server time, or multi-record business logic.
+
+In particular, the rule that a participant may belong to only one team within an event must still be enforced transactionally by the application and database design.
+
+### Required Indexes
+
+Create indexes for the primary event-scoped and frequently queried relationships:
+
+* sessions(user_id, expires_at)
+* event_memberships(event_id, role)
+* event_memberships(user_id)
+* event_tracks(event_id)
+* event_prizes(event_id)
+* event_questions(event_id, sort_order)
+* teams(event_id)
+* team_members(team_id)
+* team_members(user_id)
+* team_invites(team_id, revoked_at, expires_at)
+* projects(event_id, status)
+* project_images(project_id, sort_order)
+* project_technologies(project_id)
+* project_answers(project_id)
+
+Indexes must support event isolation, membership checks, team/project lookups, invitation validation, and public gallery queries without changing the required authorization rules.
+
 ---
 
 # 25. API Surface
 
 The exact URL naming may be adapted to the chosen framework, but the capabilities must exist.
+
+All lifecycle and deadline-sensitive API operations evaluate time through the same authoritative server clock abstraction. Client-supplied timestamps are ignored for authorization, lifecycle, deadline, or visibility decisions.
 
 ## Authentication
 
@@ -1108,7 +1264,14 @@ POST /api/auth/signup
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
+GET  /api/auth/csrf
 ````
+
+GET /api/auth/csrf returns a CSRF token for the currently authenticated session.
+
+State-changing authenticated endpoints must require the corresponding CSRF token.
+
+The CSRF token must be validated server-side before authorization-sensitive mutations are executed.
 
 **---**
 
@@ -1118,8 +1281,10 @@ Authenticated users can create event proposals:
 
 ```text
 POST  /api/events
+GET   /api/events
 GET   /api/events/:eventId
 PATCH /api/events/:eventId
+GET   /api/me/events
 ```
 
 Creation creates a pending event proposal.
@@ -1131,6 +1296,25 @@ The event lifecycle status is determined by the configured dates and server time
 Clients must not directly set or transition `status`.
 
 Protected Organizer operations require an approved `ORGANIZER` membership for the event.
+
+For PATCH /api/events/:eventId:
+
+pending proposals may be edited by their creator
+approved events may have their event structure configured while the lifecycle is DRAFT
+structural changes are rejected once the effective lifecycle is ONGOING
+structural changes remain rejected while the lifecycle is ENDED
+the backend must determine the effective lifecycle from server time
+the client must not bypass the freeze by sending a lifecycle/status value
+
+GET /api/events returns public approved events suitable for the public event listing.
+
+It must not expose pending events as normal public events.
+
+GET /api/me/events requires authentication and returns the authenticated user's event relationships, including event-scoped memberships and their own pending event proposals.
+
+GET /api/events/:eventId returns only information the requester is authorized to view for that event.
+
+Protected event data must not be exposed through the public event read.
 
 **---**
 
@@ -1272,35 +1456,98 @@ The initial Organizer is always the approved event creator.
 ## Event configuration
 
 ```text
+GET    /api/events/:eventId/tracks
 POST   /api/events/:eventId/tracks
 PATCH  /api/events/:eventId/tracks/:trackId
 DELETE /api/events/:eventId/tracks/:trackId
 
+GET    /api/events/:eventId/prizes
 POST   /api/events/:eventId/prizes
 PATCH  /api/events/:eventId/prizes/:prizeId
 DELETE /api/events/:eventId/prizes/:prizeId
 
+GET    /api/events/:eventId/questions
 POST   /api/events/:eventId/questions
 PATCH  /api/events/:eventId/questions/:questionId
 DELETE /api/events/:eventId/questions/:questionId
 ```
 
-All require appropriate Organizer authorization.
+Read endpoints must enforce the same event boundaries as mutation endpoints.
+
+Publicly readable event configuration may include tracks, prizes, and questions associated with an approved public event.
+
+Pending-event and protected organizer data must remain restricted.
+
+All mutation endpoints require appropriate Organizer authorization.
+
+Read endpoints follow the read-access rules defined above.
 
 **---**
+
+## Event administration reads
+
+GET /api/events/:eventId/members
+GET /api/events/:eventId/teams
+GET /api/events/:eventId/projects
+
+These endpoints require an appropriate event-scoped role.
+
+Organizer:
+- may inspect participants, teams, and submitted projects for their event
+
+Judge:
+- may view the event context and submitted project information for their assigned event
+- must not receive participant/team-management permissions
+
+Participant:
+- may access only resources permitted by their participant membership and team membership
+
+Responses must not expose passwords, session identifiers, CSRF tokens, raw invitation tokens, or other private security data.
 
 ## Teams
 
 ```text
 POST   /api/events/:eventId/teams
+GET    /api/events/:eventId/teams
 GET    /api/events/:eventId/teams/:teamId
+
+GET    /api/teams/:teamId
+GET    /api/teams/:teamId/project
+
 POST   /api/teams/:teamId/invites
+GET    /api/teams/:teamId/invites
+
+GET    /api/team-invites/:token
 POST   /api/team-invites/:token/accept
+
 DELETE /api/teams/:teamId/members/:userId
 DELETE /api/teams/:teamId
+DELETE /api/team-invites/:inviteId
 ```
 
+GET /api/team-invites/:token may be accessed while logged out and returns only the invitation context required to display the invitation flow.
+
+It must not expose the raw stored token, private team data, or security-sensitive information.
+
+Invitation acceptance remains an explicit POST action.
+
+Invite revocation must:
+
+* require authentication
+* require the requester to be the owner/captain of the associated team
+* verify that the invite exists
+* verify that the invite belongs to the specified team
+* mark the invite as revoked using `revoked_at`
+* prevent the invite from being accepted after revocation
+* be subject to the submission deadline
+
+Revoking an invite must not remove existing team members.
+
 Deadline rules apply to all participant-controlled team mutations.
+
+Team creation, invite acceptance, member removal, and team deletion must use database transactions whenever multiple related records are created, updated, or deleted.
+
+The server must perform authorization, deadline checks, capacity checks, and the related database mutation as one atomic operation where applicable.
 
 **---**
 
@@ -1314,16 +1561,48 @@ POST   /api/projects/:projectId/submit
 POST   /api/projects/:projectId/reopen
 POST   /api/projects/:projectId/images
 DELETE /api/projects/:projectId/images/:imageId
+GET    /api/projects/:projectId/images/:imageId
+GET /api/events/:eventId/projects
+GET /api/teams/:teamId/project
 ```
+GET /api/events/:eventId/projects is restricted to appropriate Organizer and Judge event roles.
+
+Organizers may inspect projects for their event.
+
+Judges may view submitted projects for their assigned event.
+
+Participants may access their team's project through GET /api/teams/:teamId/project when authorized.
+
+Private project data must remain subject to the project's visibility and authorization rules.
+
+Image access must be authorization-controlled.
+
+The image endpoint must:
+
+* verify that the image belongs to the requested project
+* determine the project's current visibility from the server-side deadline and submission state
+* allow authorized private access before the deadline
+* allow public access only when the project is publicly visible
+* reject unauthorized requests
+
+Do not return the underlying filesystem path to clients.
+
+Do not expose the upload directory through a public static route.
 
 Every mutation must verify team membership and deadline state.
+
+Project creation, submission, reopening, and resubmission must use database transactions when the operation changes multiple related records or requires validation followed by a state transition.
+
+Validation and state mutation must be completed against the same authoritative server state.
+
+A failed transaction must not leave a partially updated project, answer set, or submission state.
 
 Deadline-dependent project mutations must evaluate the submission deadline using the server's current time at the moment of the request.
 
 The API must reject the mutation when:
 
 ```text
-current_time >= submission_deadline
+now() >= submission_deadline
 ```
 
 ## Public gallery
@@ -1525,6 +1804,11 @@ Implement backend enforcement for:
 * server-side sessions
 * secure cookies
 * session invalidation on logout
+* CSRF protection for state-changing requests
+* HttpOnly session cookies
+* SameSite cookie protection
+* Secure cookies when served over HTTPS
+* session rotation on successful authentication
 
 ### Authorization
 
@@ -1565,7 +1849,9 @@ Escape/sanitize user-generated content appropriately.
 
 Do not build uploads in a way that only works inside one temporary container.
 
-Use a dedicated upload directory.
+Use a dedicated upload directory outside the application's public web root.
+
+Uploaded files must be served through application-controlled routes rather than direct static filesystem access.
 
 The application should behave correctly when:
 
@@ -1648,6 +1934,28 @@ At minimum, create automated coverage for:
 * logout
 * protected route without session
 * invalid credentials
+* state-changing request without CSRF token is rejected
+* invalid CSRF token is rejected
+* valid CSRF token allows the authenticated mutation
+* CSRF token from another session is rejected
+* session is rotated on successful login
+* logout invalidates the previous session
+* session cookie uses the required security attributes
+
+## API read operations
+
+- public event listing excludes pending events
+- GET /api/me/events returns only the authenticated user's event relationships
+- cross-event event reads are rejected
+- Organizer can read participants for their event
+- Organizer can read teams for their event
+- Organizer can read submitted projects for their event
+- Judge can read submitted project information for their assigned event
+- Participant can read their authorized team and project
+- participant cannot read another event's protected team/project data
+- event tracks/prizes/questions are correctly scoped to the event
+- logged-out user can read allowed invitation context without accepting the invite
+- invitation read does not expose raw token or security-sensitive data
 
 ## Event approval
 
@@ -1698,6 +2006,14 @@ At minimum, create automated coverage for:
 * one team per event
 * expired invite
 * revoked invite
+* team owner can revoke an outstanding invite
+* revoked invite cannot be accepted
+* revoking an invite does not remove existing team members
+* non-owner cannot revoke another team's invite
+* concurrent team creation and membership operations do not create invalid partial state
+* concurrent invite acceptance cannot exceed max team size
+* failed team creation rolls back all related records
+* failed invite acceptance does not create a partial membership
 
 ## Projects
 
@@ -1708,18 +2024,20 @@ At minimum, create automated coverage for:
 * edit after reopening
 * resubmit
 * required custom question validation
+* failed project submission does not leave the project partially submitted
+* failed reopen/resubmit operation does not leave an inconsistent project state
 
 ## Deadline
 
 Test at minimum:
 
-current_time < submission_deadline
+now() < submission_deadline
     → mutation allowed
 
-current_time = submission_deadline
+now() = submission_deadline
     → mutation rejected and project effectively locked
 
-current_time > submission_deadline
+now() > submission_deadline
     → mutation rejected and project effectively locked
 
 Deadline tests must use controlled server time so the exact boundary can be tested deterministically.
@@ -1742,6 +2060,48 @@ Test both:
 * valid image upload
 * invalid image rejected
 * image persists across application restart
+* private project images cannot be accessed anonymously before the submission deadline
+* authorized project/team users can access private project images
+* submitted public project images become publicly accessible after the deadline
+* non-submitted project images remain private after the deadline
+* image requests cannot access files belonging to another project
+
+## Local container runtime
+
+* `docker compose up` starts successfully from a clean local checkout
+* application starts without cloud dependencies
+* SQLite database is created/available locally
+* seed data is available after startup
+* persistent upload storage is mounted correctly
+* uploaded images remain available after container restart
+* migrations/startup initialization complete successfully
+* application is usable through the local containerized environment
+* clean database startup creates the required seed data
+* restarting the application does not duplicate seed records
+* restarting the container does not delete existing application data
+* demo seed data is not automatically reapplied over existing user-created data
+* production/non-demo startup does not reset or overwrite an existing database
+
+## Database integrity
+
+* duplicate user email is rejected
+* duplicate event membership for the same user/event is rejected
+* duplicate project for the same team/event is rejected
+* duplicate answer for the same project/question is rejected
+* invalid event date ordering is rejected
+* invalid enum/status values are rejected
+* foreign-key violations are rejected
+* database constraints remain active in the local SQLite environment
+
+### Clock abstraction tests
+
+- Verify production clock returns server time.
+- Verify tests can inject a fixed clock value.
+- Verify lifecycle decisions use the injected clock.
+- Verify submission deadline decisions use the injected clock.
+- Verify exact `start_at`, `submission_deadline`, and `end_at` boundaries deterministically.
+- Verify no real-time sleeping is required for deadline/lifecycle tests.
+- Verify all deadline-sensitive rules observe the same injected clock value.
 
 ---
 
@@ -1766,15 +2126,59 @@ Include:
 * prizes
 * custom questions
 
+Seed behavior must be deterministic and safe.
+
+For a clean local database:
+
+* the seed process must create the required demonstration data
+* the application must be immediately usable after startup
+* the seeded relationships must be internally consistent
+
+For an existing local database:
+
+* seeding must be idempotent
+* repeated startup must not duplicate seed records
+* existing user-created data must not be deleted or overwritten
+* existing uploaded files must not be removed by seeding
+
 Do not make the seed data dependent on external services.
 
-Document development credentials clearly for local use.
+Demo/development credentials must be documented clearly for local use.
+
+Production or non-demo deployments must not automatically reset the database or overwrite existing application data with demo seed data.
+
+Demo seed initialization may be enabled explicitly for a fresh local environment.
 
 ---
 
 # 38. Recommended Implementation Order
 
 Build in this order.
+
+### Phase 0 — Local Runtime Baseline
+
+Build the required local runtime before feature implementation:
+
+* Dockerfile
+* Docker Compose configuration
+* local SQLite database path
+* persistent upload volume
+* local environment defaults
+* database migration/startup flow
+* deterministic seed data
+* application startup health verification
+
+`docker compose up` must start a working locally seeded portal from a clean checkout.
+
+The local runtime must not depend on:
+
+* cloud services
+* hosted databases
+* hosted authentication
+* external APIs
+* external storage
+
+All later development phases should run inside this supported local environment.
 
 ### Phase 1 — Foundation
 
@@ -1852,94 +2256,90 @@ Build in this order.
 * cross-event isolation tests
 * end-to-end lifecycle test
 
+Organizer can modify event structure while the approved event is DRAFT
+Organizer cannot modify start time, submission deadline, end time, maximum team size, tracks, prizes, or custom questions once the event reaches ONGOING
+structural event updates remain rejected after ENDED
+exact start_at boundary is treated as ONGOING
+rejected structural updates do not partially modify the event
+
 ### Phase 9 — Final Packaging
 
 Only after the application works:
 
-* Docker configuration
-* persistent upload volume
-* local startup flow
 * README
 * architecture documentation
 * data model documentation
 * license
 * acceptance documentation
+* final local startup verification
+* final Docker Compose verification
 
 ---
 
 # 39. Critical End-to-End Test
 
+### Controlled test time
+
+The E2E lifecycle test must use an injected/fake server clock.
+
+Do not wait or sleep for real time.
+
+Explicitly advance the server clock to:
+1. a time before `start_at`
+2. exactly `start_at`
+3. a time before `submission_deadline`
+4. exactly `submission_deadline`
+5. exactly `end_at`
+
+All lifecycle, deadline, mutation, and visibility assertions must be evaluated against that controlled clock.
+
 The most important test should reproduce the complete platform lifecycle.
 
 1. Create Admin
-
 2. Create normal authenticated user
-
 3. Normal user creates event proposal
-
 4. Confirm event is PENDING_APPROVAL
-
 5. Confirm creator is NOT Organizer yet
-
 6. Admin opens approval queue
-
 7. Admin approves event
-
 8. Confirm creator becomes Organizer
-
-9. Organizer configures event
-
-10. Confirm event is DRAFT before start_at
-
-11. Confirm event becomes ONGOING at start_at
-
-12. Confirm event becomes ENDED at end_at
-
-13. Organizer assigns a Judge
-
-14. Confirm Judge membership is created
-
-15. Confirm Judge can access event/project context without participant permissions
-
-16. Participant joins event
-
-17. Participant creates team
-
-18. Participant generates invite
-
-19. Second user opens invite while logged out
-
-20. Second user signs up/logs in
-
-21. Invite context survives authentication
-
-22. Second user explicitly accepts invite
-
-23. Team reaches valid membership state
-
-24. Team creates project
-
-25. Team edits project
-
-26. Team submits project
-
-27. Team reopens and resubmits before deadline
-
-28. Current server time reaches the submission deadline
-
-29. Confirm project mutations are rejected at the exact deadline boundary
-
-30. Confirm project is effectively locked
-
-31. Confirm team changes are locked
-
-32. Confirm submitted project is publicly visible
-
-33. Confirm gallery search/filter works
-
-34. Confirm unauthorized users cannot modify protected resources
-
-35. Confirm Judge can access event/project context without participant editing permissions
+9. Confirm authenticated user can view their My Events relationships
+10. Confirm Organizer can read event participants, teams, and submitted projects
+11. Confirm authenticated state-changing requests require a valid CSRF token
+12. Confirm login establishes a new authenticated session
+13. Confirm logout invalidates the session
+14. Organizer configures event
+15. Confirm event is DRAFT before start_at
+16. Confirm Organizer can modify event structure while event is DRAFT
+17. Participant joins event
+18. Participant creates team
+19. Participant generates invite
+20. Second user opens invite while logged out
+21. Second user signs up/logs in
+22. Invite context survives authentication
+23. Second user explicitly accepts invite
+24. Team reaches valid membership state
+25. Team creates project
+26. Team edits project
+27. Team submits project
+28. Team reopens and resubmits before deadline
+29. Confirm event becomes ONGOING at start_at
+30. Confirm structural event configuration is frozen at start_at
+31. Confirm Organizer cannot modify frozen event structure while ONGOING
+32. Before the submission deadline, confirm project images are not publicly accessible
+33. Confirm authorized project users can access their private images
+34. Organizer assigns a Judge
+35. Confirm Judge membership is created
+36. Confirm Judge can access event/project context without participant permissions
+37. Current server time reaches the submission deadline
+38. Confirm project mutations are rejected at the exact deadline boundary
+39. Confirm project is effectively locked
+40. Confirm team changes are locked
+41. Confirm submitted project is publicly visible
+42. Confirm gallery search/filter works
+43. Confirm event becomes ENDED at end_at
+44. Confirm unauthorized users cannot modify protected resources
+45. Confirm Judge cannot edit projects and has read-only project access
 
 ---
 
@@ -1975,22 +2375,38 @@ Do not build speculative abstractions.
 
 The application must be runnable locally without cloud dependencies.
 
-The final environment should support:
+The supported local baseline is:
 
 ```text
 docker compose up
 ```
 
-and provide:
+This must work from a clean checkout without requiring:
 
-* application
-* local SQLite database
-* persistent uploaded images
-* seeded data
-* working authentication
-* complete core lifecycle
+a hosted database
+hosted authentication
+cloud storage
+external API keys
+external runtime services
 
-The application must not depend on a hosted database or hosted authentication provider.
+The local environment must provide:
+
+application
+local SQLite database
+persistent uploaded images
+seeded data
+working authentication
+complete core lifecycle
+
+Docker and the local runtime are part of the project's development baseline, not optional final packaging.
+
+The implementation must remain usable after application and container restarts.
+
+The clean local startup path may initialize the required demonstration seed data.
+
+The seed process must be safe to run repeatedly and must not reset an existing database.
+
+The local demonstration environment and production/non-demo environments must not have the same automatic data-reset behavior.
 
 ---
 
@@ -2073,9 +2489,41 @@ Before considering the implementation complete, verify:
 * [ ] Input validation exists
 * [ ] Upload validation exists
 
+### DOGFOOD Compliance
+
+* [ ] Tier 1 Core functionality is complete and working
+* [ ] The application is self-hostable
+* [ ] `docker compose up` starts the portal from a clean checkout
+* [ ] The application works locally without hosted authentication
+* [ ] The application works locally without a hosted database
+* [ ] The application works locally without cloud storage
+* [ ] The application has no external runtime API dependency
+* [ ] Offline laptop operation is supported after local dependencies/images are available
+* [ ] All required application code was written during the 72-hour hackathon window
+* [ ] Frameworks, libraries, boilerplate, and permitted AI assistance remain within the hackathon rules
+* [ ] The project uses an OSI-approved open source license
+* [ ] The repository is public on GitHub
+* [ ] The submitted repository contains the complete runnable implementation
+* [ ] The required submission deadline is respected: September 28, 18:00 UTC
+* [ ] Core correctness is prioritized over incomplete stretch functionality
+* [ ] The implementation does not require functionality from higher tiers before Tier 1 Core is complete
+
+### DOGFOOD Judging Alignment
+
+The implementation should prioritize the documented judging criteria:
+
+* Tier completion and correctness
+* Judging integrity
+* Adoptability and operability
+* Code quality and innovation
+
+Correctness of the required Core lifecycle takes priority over unfinished higher-tier features.
+
 ---
 
 # 43. Definition of Done
+
+Organizers/Team owners can revoke outstanding team invitations, and revoked invitations cannot be accepted.
 
 The implementation is complete when:
 
@@ -2085,19 +2533,33 @@ The implementation is complete when:
 4. Approval automatically makes the creator the Organizer of that event.
 5. The Organizer can configure and run the event.
 6. Event lifecycle status is correctly derived from approval state and configured dates.
-7. Participants can form teams using invitation links.
-8. Invitation state survives signup/login.
-9. Teams can create and edit a shared project.
-10. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
-11. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
-12. Local project images persist across application restarts when persistent storage is mounted.
-13. Submitted projects become publicly visible after the deadline.
-14. The public gallery supports search and filtering.
-15. Organizers can assign and remove event-scoped Judges.
-16. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-17. Cross-event authorization is enforced server-side.
-18. The complete lifecycle works from a clean local installation.
-19. The implementation remains limited to the functionality specified in this document.
+7. Event structure can be configured during DRAFT and is frozen when the event becomes ONGOING.
+8. Participants can form teams using invitation links.
+9. Invitation state survives signup/login.
+10. Teams can create and edit a shared project.
+11. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
+12. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
+13. Local project images persist across application restarts when persistent storage is mounted.
+14. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
+15. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
+16. Submitted projects become publicly visible after the deadline.
+17. The public gallery supports search and filtering.
+18. Organizers can assign and remove event-scoped Judges.
+19. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+20. Cross-event authorization is enforced server-side.
+21. The complete lifecycle works from a clean local installation.
+22. The implementation remains limited to the functionality specified in this document.
+23. Required event, membership, team, invitation, configuration, and project read operations are available with correct authorization and event isolation.
+
+24. Public and protected read endpoints do not expose private or security-sensitive data.
+25. State-changing authenticated requests are protected against CSRF.
+26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
+27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
+28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
+29. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
+30. Seed initialization is deterministic and idempotent: a clean local installation receives the required demonstration data, repeated startup does not duplicate or overwrite existing data, and production/non-demo environments do not automatically reset application data.
+31. All lifecycle, deadline, mutation, and visibility time checks use one authoritative server clock abstraction.
+32. Time-dependent tests are deterministic and do not depend on real-time sleeping.
 
 ---
 
