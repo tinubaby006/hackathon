@@ -187,6 +187,28 @@ A participant can:
 * create/edit the team's project
 * submit/resubmit the project before the deadline
 
+### Joining an event
+
+A user becomes a Participant by explicitly joining an approved event.
+
+A user may join an event only when:
+
+* the user is authenticated
+* the event exists
+* the event has `approval_status = APPROVED`
+* the submission deadline has not passed
+* the user does not already have a membership in that event
+
+Joining an event creates:
+
+```text
+event_memberships(
+  event_id = event.id,
+  user_id = current_user.id,
+  role = PARTICIPANT
+)
+```
+
 ---
 
 ## Judge
@@ -1054,27 +1076,84 @@ POST /api/auth/signup
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
-```
+````
 
----
+**---**
 
 ## Event creation
 
-Authenticated user:
+Authenticated users can create event proposals:
 
 ```text
-POST /api/events
-GET  /api/events/:eventId
+POST  /api/events
+GET   /api/events/:eventId
 PATCH /api/events/:eventId
 ```
 
-Creation creates a pending proposal.
+Creation creates a pending event proposal.
 
 The creator may edit their own pending proposal.
 
-Protected organizer operations require an approved Organizer membership.
+Protected Organizer operations require an approved `ORGANIZER` membership for the event.
 
----
+**---**
+
+## Event participation
+
+Authenticated users may explicitly join an approved event:
+
+```text
+POST /api/events/:eventId/join
+```
+
+Joining must:
+
+* require authentication
+* verify that the event exists
+* verify `approval_status = APPROVED`
+* verify that the submission deadline has not passed
+* verify that the user has no existing membership in the event
+* create an `event_memberships` record with `role = PARTICIPANT`
+
+The operation must be atomic.
+
+Joining an event must be performed by an explicit user action.
+
+Opening or viewing an event must not automatically create an event membership.
+
+Possible outcomes:
+
+```text
+201 Created
+```
+
+when the participant membership is successfully created.
+
+```text
+401 Unauthorized
+```
+
+when the user is not authenticated.
+
+```text
+404 Not Found
+```
+
+when the event does not exist.
+
+```text
+403 Forbidden
+```
+
+when the event exists but participation is not currently permitted.
+
+```text
+409 Conflict
+```
+
+when the user already has an event membership or the event can no longer accept participants.
+
+**---**
 
 ## Admin approval
 
@@ -1085,9 +1164,9 @@ POST /api/admin/events/:eventId/approve
 
 Approval must be Admin-only.
 
-Approval creates the Organizer membership for the event creator.
+Approval creates the `ORGANIZER` membership for the event creator.
 
----
+**---**
 
 ## Additional organizer administration
 
@@ -1095,7 +1174,7 @@ If additional event organizers are supported, keep this separate from the event-
 
 The initial Organizer is always the approved event creator.
 
----
+**---**
 
 ## Event configuration
 
@@ -1115,24 +1194,22 @@ DELETE /api/events/:eventId/questions/:questionId
 
 All require appropriate Organizer authorization.
 
----
+**---**
 
 ## Teams
 
 ```text
 POST   /api/events/:eventId/teams
 GET    /api/events/:eventId/teams/:teamId
-
 POST   /api/teams/:teamId/invites
 POST   /api/team-invites/:token/accept
-
 DELETE /api/teams/:teamId/members/:userId
 DELETE /api/teams/:teamId
 ```
 
 Deadline rules apply to all participant-controlled team mutations.
 
----
+**---**
 
 ## Projects
 
@@ -1140,17 +1217,15 @@ Deadline rules apply to all participant-controlled team mutations.
 POST   /api/teams/:teamId/project
 GET    /api/projects/:projectId
 PATCH  /api/projects/:projectId
-
 POST   /api/projects/:projectId/submit
 POST   /api/projects/:projectId/reopen
-
 POST   /api/projects/:projectId/images
 DELETE /api/projects/:projectId/images/:imageId
 ```
 
 Every mutation must verify team membership and deadline state.
 
----
+**---**
 
 ## Public gallery
 
@@ -1166,10 +1241,6 @@ q
 event
 track
 ```
-
-as appropriate.
-
----
 
 # 26. Required UI
 
@@ -1280,9 +1351,13 @@ Approval must happen through a protected backend operation.
 Participant experience must support:
 
 ```text
-Event
+Approved Event
  ↓
-Join / participate
+View Event
+ ↓
+Explicitly Join Event
+ ↓
+Participant Membership Created
  ↓
 Create or join team
  ↓
@@ -1298,8 +1373,6 @@ Reopen/edit/resubmit before deadline
  ↓
 Locked at deadline
 ```
-
-The UI should clearly show the submission deadline and project state.
 
 ---
 
