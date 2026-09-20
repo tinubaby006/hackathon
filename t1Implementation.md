@@ -732,6 +732,24 @@ Every relevant backend operation must independently check the event deadline.
 
 The server's current time is authoritative.
 
+The submission deadline must be evaluated directly from the server's current time.
+
+Use:
+
+current_time < submission_deadline
+    → submission-dependent mutations are allowed
+
+current_time >= submission_deadline
+    → submission-dependent mutations are rejected
+
+The backend must not rely on a stored project or event status to determine whether the deadline has passed.
+
+The deadline check must run on every participant-controlled mutation that is restricted by the submission deadline.
+
+No background scheduler or cron job is required for deadline enforcement.
+
+A project is considered effectively LOCKED once current_time >= submission_deadline, even if a persisted status field has not yet been updated.
+
 ---
 
 # 20. Public Project Visibility
@@ -1300,7 +1318,13 @@ DELETE /api/projects/:projectId/images/:imageId
 
 Every mutation must verify team membership and deadline state.
 
-**---**
+Deadline-dependent project mutations must evaluate the submission deadline using the server's current time at the moment of the request.
+
+The API must reject the mutation when:
+
+```text
+current_time >= submission_deadline
+```
 
 ## Public gallery
 
@@ -1689,11 +1713,16 @@ At minimum, create automated coverage for:
 
 Test at minimum:
 
-```text
-before deadline → allowed
-at deadline → locked
-after deadline → rejected
-```
+current_time < submission_deadline
+    → mutation allowed
+
+current_time = submission_deadline
+    → mutation rejected and project effectively locked
+
+current_time > submission_deadline
+    → mutation rejected and project effectively locked
+
+Deadline tests must use controlled server time so the exact boundary can be tested deterministically.
 
 Test both:
 
@@ -1896,19 +1925,21 @@ The most important test should reproduce the complete platform lifecycle.
 
 27. Team reopens and resubmits before deadline
 
-28. Deadline passes
+28. Current server time reaches the submission deadline
 
-29. Confirm project is locked
+29. Confirm project mutations are rejected at the exact deadline boundary
 
-30. Confirm team changes are locked
+30. Confirm project is effectively locked
 
-31. Confirm submitted project is publicly visible
+31. Confirm team changes are locked
 
-32. Confirm gallery search/filter works
+32. Confirm submitted project is publicly visible
 
-33. Confirm unauthorized users cannot modify protected resources
+33. Confirm gallery search/filter works
 
-34. Confirm Judge can access event/project context without participant editing permissions
+34. Confirm unauthorized users cannot modify protected resources
+
+35. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -2058,7 +2089,7 @@ The implementation is complete when:
 8. Invitation state survives signup/login.
 9. Teams can create and edit a shared project.
 10. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
-11. The backend strictly locks projects and team changes after the deadline.
+11. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
 12. Local project images persist across application restarts when persistent storage is mounted.
 13. Submitted projects become publicly visible after the deadline.
 14. The public gallery supports search and filtering.
