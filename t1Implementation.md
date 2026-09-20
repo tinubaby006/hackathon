@@ -223,6 +223,25 @@ A judge can:
 
 Judges must not receive participant/team-management permissions unless they separately have that role in another event.
 
+### Judge assignment
+
+A Judge is assigned explicitly to an approved event by an Organizer of that event.
+
+The target user must:
+
+* already have an authenticated platform account
+* have no existing membership in the event
+
+Judge assignment creates:
+
+```text
+event_memberships(
+  event_id = event.id,
+  user_id = target_user.id,
+  role = JUDGE
+)
+```
+
 ---
 
 ## Organizer
@@ -1168,6 +1187,63 @@ Approval creates the `ORGANIZER` membership for the event creator.
 
 **---**
 
+## Judge assignment
+
+An Organizer may assign an existing platform user as a Judge for their approved event.
+
+```text
+POST /api/events/:eventId/judges
+GET  /api/events/:eventId/judges
+DELETE /api/events/:eventId/judges/:userId
+```
+
+Judge assignment must:
+
+* require authentication
+* require an approved event
+* require Organizer authorization for that event
+* verify that the target user exists
+* verify that the target user has no existing membership in the event
+* create an `event_memberships` record with `role = JUDGE`
+* perform the membership creation atomically
+
+Removing a Judge deletes only that Judge's membership for the specified event.
+
+Possible outcomes:
+
+```text
+201 Created
+```
+
+when the Judge membership is created successfully.
+
+```text
+401 Unauthorized
+```
+
+when the requester is not authenticated.
+
+```text
+403 Forbidden
+```
+
+when the requester is authenticated but is not an Organizer of the event.
+
+```text
+404 Not Found
+```
+
+when the event or target user does not exist.
+
+```text
+409 Conflict
+```
+
+when the target user already has a membership in the event.
+
+Judge assignment does not change the user's roles in other events.
+
+
 ## Additional organizer administration
 
 If additional event organizers are supported, keep this separate from the event-creation flow.
@@ -1408,6 +1484,12 @@ Organizer must be able to configure:
 
 The Organizer must also be able to inspect the event's participants, teams, and submitted projects as needed for event administration.
 
+The Organizer must also be able to:
+
+* view the event's assigned Judges
+* assign an existing platform user as Judge
+* remove an assigned Judge
+
 ---
 
 # 32. Security Requirements
@@ -1554,6 +1636,17 @@ At minimum, create automated coverage for:
 * Admin approves event
 * creator becomes Organizer
 * approved event becomes manageable by creator
+
+## Judge assignment
+
+* Organizer can assign an existing user as Judge
+* non-Organizer cannot assign Judges
+* assigned Judge receives `JUDGE` membership
+* user already holding a membership in the event cannot be assigned as Judge
+* Judge can access the event/project context
+* Judge cannot modify participant/team/project resources
+* removing a Judge removes only that event membership
+* Judge role in one event does not affect roles in another event
 
 ## Event isolation
 
@@ -1740,38 +1833,67 @@ Only after the application works:
 
 The most important test should reproduce the complete platform lifecycle.
 
-```text
 1. Create Admin
-2. Create normal authenticated user
-3. Normal user creates event proposal
-4. Confirm event is PENDING_APPROVAL
-5. Confirm creator is NOT Organizer yet
-6. Admin opens approval queue
-7. Admin approves event
-8. Confirm creator becomes Organizer
-9. Organizer configures event
-10. Participant joins event
-11. Participant creates team
-12. Participant generates invite
-13. Second user opens invite while logged out
-14. Second user signs up/logs in
-15. Invite context survives authentication
-16. Second user explicitly accepts invite
-17. Team reaches valid membership state
-18. Team creates project
-19. Team edits project
-20. Team submits project
-21. Team reopens and resubmits before deadline
-22. Deadline passes
-23. Confirm project is locked
-24. Confirm team changes are locked
-25. Confirm submitted project is publicly visible
-26. Confirm gallery search/filter works
-27. Confirm unauthorized users cannot modify protected resources
-28. Confirm Judge can access event/project context without participant editing permissions
-```
 
-This flow should work locally from a clean database.
+2. Create normal authenticated user
+
+3. Normal user creates event proposal
+
+4. Confirm event is PENDING_APPROVAL
+
+5. Confirm creator is NOT Organizer yet
+
+6. Admin opens approval queue
+
+7. Admin approves event
+
+8. Confirm creator becomes Organizer
+
+9. Organizer configures event
+
+10. Organizer assigns a Judge
+
+11. Confirm Judge membership is created
+
+12. Confirm Judge can access event/project context without participant permissions
+
+13. Participant joins event
+
+14. Participant creates team
+
+15. Participant generates invite
+
+16. Second user opens invite while logged out
+
+17. Second user signs up/logs in
+
+18. Invite context survives authentication
+
+19. Second user explicitly accepts invite
+
+20. Team reaches valid membership state
+
+21. Team creates project
+
+22. Team edits project
+
+23. Team submits project
+
+24. Team reopens and resubmits before deadline
+
+25. Deadline passes
+
+26. Confirm project is locked
+
+27. Confirm team changes are locked
+
+28. Confirm submitted project is publicly visible
+
+29. Confirm gallery search/filter works
+
+30. Confirm unauthorized users cannot modify protected resources
+
+31. Confirm Judge can access event/project context without participant editing permissions
 
 ---
 
@@ -1924,10 +2046,11 @@ The implementation is complete when:
 11. Local project images persist across application restarts when persistent storage is mounted.
 12. Submitted projects become publicly visible after the deadline.
 13. The public gallery supports search and filtering.
-14. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-15. Cross-event authorization is enforced server-side.
-16. The complete lifecycle works from a clean local installation.
-17. The implementation remains limited to the functionality specified in this document.
+14. Organizers can assign and remove event-scoped Judges.
+15. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+16. Cross-event authorization is enforced server-side.
+17. The complete lifecycle works from a clean local installation.
+18. The implementation remains limited to the functionality specified in this document.
 
 ---
 
