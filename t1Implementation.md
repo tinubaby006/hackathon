@@ -1988,6 +1988,17 @@ Test both:
 * non-submitted project images remain private after the deadline
 * image requests cannot access files belonging to another project
 
+## Local container runtime
+
+* `docker compose up` starts successfully from a clean local checkout
+* application starts without cloud dependencies
+* SQLite database is created/available locally
+* seed data is available after startup
+* persistent upload storage is mounted correctly
+* uploaded images remain available after container restart
+* migrations/startup initialization complete successfully
+* application is usable through the local containerized environment
+
 ---
 
 # 37. Seed Data
@@ -2020,6 +2031,31 @@ Document development credentials clearly for local use.
 # 38. Recommended Implementation Order
 
 Build in this order.
+
+### Phase 0 — Local Runtime Baseline
+
+Build the required local runtime before feature implementation:
+
+* Dockerfile
+* Docker Compose configuration
+* local SQLite database path
+* persistent upload volume
+* local environment defaults
+* database migration/startup flow
+* deterministic seed data
+* application startup health verification
+
+`docker compose up` must start a working locally seeded portal from a clean checkout.
+
+The local runtime must not depend on:
+
+* cloud services
+* hosted databases
+* hosted authentication
+* external APIs
+* external storage
+
+All later development phases should run inside this supported local environment.
 
 ### Phase 1 — Foundation
 
@@ -2107,14 +2143,13 @@ rejected structural updates do not partially modify the event
 
 Only after the application works:
 
-* Docker configuration
-* persistent upload volume
-* local startup flow
 * README
 * architecture documentation
 * data model documentation
 * license
 * acceptance documentation
+* final local startup verification
+* final Docker Compose verification
 
 ---
 
@@ -2202,22 +2237,32 @@ Do not build speculative abstractions.
 
 The application must be runnable locally without cloud dependencies.
 
-The final environment should support:
+The supported local baseline is:
 
 ```text
 docker compose up
 ```
 
-and provide:
+This must work from a clean checkout without requiring:
 
-* application
-* local SQLite database
-* persistent uploaded images
-* seeded data
-* working authentication
-* complete core lifecycle
+a hosted database
+hosted authentication
+cloud storage
+external API keys
+external runtime services
 
-The application must not depend on a hosted database or hosted authentication provider.
+The local environment must provide:
+
+application
+local SQLite database
+persistent uploaded images
+seeded data
+working authentication
+complete core lifecycle
+
+Docker and the local runtime are part of the project's development baseline, not optional final packaging.
+
+The implementation must remain usable after application and container restarts.
 
 ---
 
@@ -2335,6 +2380,7 @@ The implementation is complete when:
 24. Public and protected read endpoints do not expose private or security-sensitive data.
 25. State-changing authenticated requests are protected against CSRF.
 26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
+27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
 
 ---
 
