@@ -12,36 +12,25 @@
 
 Build a complete, locally runnable hackathon platform that supports this lifecycle:
 
-```text
-Authenticated User
-      │
-      │ creates event
-      ▼
-Event Proposal
-      │
-      │ Admin approval
-      ▼
-Approved Event
-      │
-      │ creator becomes Organizer
-      ▼
+Visitor
+   ↓
+Authentication
+   ↓
+Event proposal
+   ↓
+Admin approval
+   ↓
 Organizer configures event
-      │
-      ▼
-Participants join / create teams
-      │
-      ▼
-Teams submit projects
-      │
-      ▼
-Submission deadline locks projects
-      │
-      ▼
-Projects become publicly visible
-      │
-      ▼
-Public gallery with search/filter
-```
+   ↓
+Participant joins
+   ↓
+Team formation
+   ↓
+Shared project
+   ↓
+Draft → Submit → Deadline lock
+   ↓
+Public gallery
 
 The implementation must work locally without requiring hosted authentication, a hosted database, cloud storage, or external API keys.
 
@@ -1388,63 +1377,6 @@ Approval creates the `ORGANIZER` membership for the event creator.
 
 **---**
 
-## Judge assignment
-
-An Organizer may assign an existing platform user as a Judge for their approved event.
-
-```text
-POST /api/events/:eventId/judges
-GET  /api/events/:eventId/judges
-DELETE /api/events/:eventId/judges/:userId
-```
-
-Judge assignment must:
-
-* require authentication
-* require an approved event
-* require Organizer authorization for that event
-* verify that the target user exists
-* verify that the target user has no existing membership in the event
-* create an `event_memberships` record with `role = JUDGE`
-* perform the membership creation atomically
-
-Removing a Judge deletes only that Judge's membership for the specified event.
-
-Possible outcomes:
-
-```text
-201 Created
-```
-
-when the Judge membership is created successfully.
-
-```text
-401 Unauthorized
-```
-
-when the requester is not authenticated.
-
-```text
-403 Forbidden
-```
-
-when the requester is authenticated but is not an Organizer of the event.
-
-```text
-404 Not Found
-```
-
-when the event or target user does not exist.
-
-```text
-409 Conflict
-```
-
-when the target user already has a membership in the event.
-
-Judge assignment does not change the user's roles in other events.
-
-
 ## Additional organizer administration
 
 If additional event organizers are supported, keep this separate from the event-creation flow.
@@ -1978,17 +1910,6 @@ At minimum, create automated coverage for:
 * unapproved event never becomes `ONGOING`
 * client cannot manually change lifecycle status
 
-## Judge assignment
-
-* Organizer can assign an existing user as Judge
-* non-Organizer cannot assign Judges
-* assigned Judge receives `JUDGE` membership
-* user already holding a membership in the event cannot be assigned as Judge
-* Judge can access the event/project context
-* Judge cannot modify participant/team/project resources
-* removing a Judge removes only that event membership
-* Judge role in one event does not affect roles in another event
-
 ## Event isolation
 
 * user can access own event
@@ -2275,6 +2196,357 @@ Only after the application works:
 * final Docker Compose verification
 
 ---
+# 36. Testing Requirements
+
+At minimum, create automated coverage for:
+
+## Authentication
+
+* signup
+* login
+* logout
+* protected route without session
+* invalid credentials
+* state-changing request without CSRF token is rejected
+* invalid CSRF token is rejected
+* valid CSRF token allows the authenticated mutation
+* CSRF token from another session is rejected
+* session is rotated on successful login
+* logout invalidates the previous session
+* session cookie uses the required security attributes
+
+## API read operations
+
+* public event listing excludes pending events
+* GET /api/me/events returns only the authenticated user's event relationships
+* cross-event event reads are rejected
+* Organizer can read participants for their event
+* Organizer can read teams for their event
+* Organizer can read submitted projects for their event
+* Judge can read submitted project information for their assigned event
+* Participant can read their authorized team and project
+* participant cannot read another event's protected team/project data
+* event tracks/prizes/questions are correctly scoped to the event
+* logged-out user can read allowed invitation context without accepting the invite
+* invitation read does not expose raw token or security-sensitive data
+
+## Event approval
+
+* authenticated user creates event
+* event starts as pending
+* creator is not Organizer before approval
+* Admin can see pending event
+* non-Admin cannot approve
+* Admin approves event
+* creator becomes Organizer
+* approved event becomes manageable by creator
+
+## Event lifecycle
+
+* approved event before `start_at` is `DRAFT`
+* event at `start_at` is `ONGOING`
+* event between `start_at` and `end_at` is `ONGOING`
+* event at `end_at` is `ENDED`
+* event after `end_at` remains `ENDED`
+* unapproved event never becomes `ONGOING`
+* client cannot manually change lifecycle status
+
+## Event isolation
+
+* user can access own event
+* unauthorized user receives 403
+* cross-event ID manipulation fails
+
+## Teams
+
+* participant creates team
+* owner becomes captain
+* invite creation
+* invite acceptance
+* signup/login invite continuation
+* max team size
+* one team per event
+* expired invite
+* revoked invite
+* team owner can revoke an outstanding invite
+* revoked invite cannot be accepted
+* revoking an invite does not remove existing team members
+* non-owner cannot revoke another team's invite
+* concurrent team creation and membership operations do not create invalid partial state
+* concurrent invite acceptance cannot exceed max team size
+* failed team creation rolls back all related records
+* failed invite acceptance does not create a partial membership
+
+## Projects
+
+* create project
+* edit draft
+* submit
+* reopen before deadline
+* edit after reopening
+* resubmit
+* required custom question validation
+* failed project submission does not leave the project partially submitted
+* failed reopen/resubmit operation does not leave an inconsistent project state
+
+## Deadline
+
+Test at minimum:
+
+```text
+now() < submission_deadline
+    → mutation allowed
+
+now() = submission_deadline
+    → mutation rejected and project effectively locked
+
+now() > submission_deadline
+    → mutation rejected and project effectively locked
+```
+
+Deadline tests must use controlled server time so the exact boundary can be tested deterministically.
+
+Test both:
+
+* project mutations
+* team/invitation mutations
+
+## Public gallery
+
+* submitted project becomes public after deadline
+* non-submitted project does not become public
+* search works
+* event filter works
+* track filter works
+
+## Uploads
+
+* valid image upload
+* invalid image rejected
+* image persists across application restart
+* private project images cannot be accessed anonymously before the submission deadline
+* authorized project/team users can access private project images
+* submitted public project images become publicly accessible after the deadline
+* non-submitted project images remain private after the deadline
+* image requests cannot access files belonging to another project
+
+## Local container runtime
+
+* `docker compose up` starts successfully from a clean local checkout
+* application starts without cloud dependencies
+* SQLite database is created/available locally
+* seed data is available after startup
+* persistent upload storage is mounted correctly
+* uploaded images remain available after container restart
+* migrations/startup initialization complete successfully
+* application is usable through the local containerized environment
+* clean database startup creates the required seed data
+* restarting the application does not duplicate seed records
+* restarting the container does not delete existing application data
+* demo seed data is not automatically reapplied over existing user-created data
+* production/non-demo startup does not reset or overwrite an existing database
+
+## Database integrity
+
+* duplicate user email is rejected
+* duplicate event membership for the same user/event is rejected
+* duplicate project for the same team/event is rejected
+* duplicate answer for the same project/question is rejected
+* invalid event date ordering is rejected
+* invalid enum/status values are rejected
+* foreign-key violations are rejected
+* database constraints remain active in the local SQLite environment
+
+### Clock abstraction tests
+
+* Verify production clock returns server time.
+* Verify tests can inject a fixed clock value.
+* Verify lifecycle decisions use the injected clock.
+* Verify submission deadline decisions use the injected clock.
+* Verify exact `start_at`, `submission_deadline`, and `end_at` boundaries deterministically.
+* Verify no real-time sleeping is required for deadline/lifecycle tests.
+* Verify all deadline-sensitive rules observe the same injected clock value.
+
+---
+
+# 37. Seed Data
+
+Provide useful local seed data.
+
+The seeded environment should make the complete T1 lifecycle easy to demonstrate.
+
+Include:
+
+* Admin account
+* several normal users
+* at least one approved event
+* at least one pending event proposal
+* participant memberships
+* judge membership
+* organizer membership
+* example team
+* example project
+* tracks
+* prizes
+* custom questions
+
+Seed behavior must be deterministic and safe.
+
+For a clean local database:
+
+* the seed process must create the required demonstration data
+* the application must be immediately usable after startup
+* the seeded relationships must be internally consistent
+
+For an existing local database:
+
+* seeding must be idempotent
+* repeated startup must not duplicate seed records
+* existing user-created data must not be deleted or overwritten
+* existing uploaded files must not be removed by seeding
+
+Do not make the seed data dependent on external services.
+
+Demo/development credentials must be documented clearly for local use.
+
+Production or non-demo deployments must not automatically reset the database or overwrite existing application data with demo seed data.
+
+Demo seed initialization may be enabled explicitly for a fresh local environment.
+
+---
+
+# 38. Recommended Implementation Order
+
+Build in this order.
+
+### Phase 0 — Local Runtime Baseline
+
+Build the required local runtime before feature implementation:
+
+* Dockerfile
+* Docker Compose configuration
+* local SQLite database path
+* persistent upload volume
+* local environment defaults
+* database migration/startup flow
+* deterministic seed data
+* application startup health verification
+
+`docker compose up` must start a working locally seeded portal from a clean checkout.
+
+The local runtime must not depend on:
+
+* cloud services
+* hosted databases
+* hosted authentication
+* external APIs
+* external storage
+
+All later development phases should run inside this supported local environment.
+
+### Phase 1 — Foundation
+
+* project setup
+* database
+* schema
+* migrations
+* authentication
+* sessions
+* seed data
+* base layout
+
+### Phase 2 — Roles and Authorization
+
+* platform Admin
+* event memberships
+* Participant
+* Judge
+* Organizer
+* backend permission helpers
+* cross-event authorization
+
+### Phase 3 — Event Proposal and Approval
+
+* authenticated user creates event
+* pending event state
+* creator proposal editing
+* Admin approval queue
+* Admin approval endpoint
+* creator becomes Organizer after approval
+* event lifecycle
+
+### Phase 4 — Event Configuration
+
+* dates
+* team size
+* tracks
+* prizes
+* custom questions
+
+### Phase 5 — Teams
+
+* team creation
+* ownership
+* invites
+* invite acceptance
+* signup/login invite continuation
+* capacity enforcement
+* deadline enforcement
+* invite revocation
+
+### Phase 6 — Projects
+
+* project creation
+* project editing
+* custom answers
+* technology tags
+* image uploads
+* submit/reopen/resubmit
+* deadline locking
+
+### Phase 7 — Public Gallery
+
+* public event pages
+* public projects
+* gallery
+* search
+* filters
+
+### Phase 8 — Testing and Hardening
+
+* authorization tests
+* deadline tests
+* invite tests
+* upload persistence tests
+* cross-event isolation tests
+* end-to-end lifecycle test
+* database integrity tests
+* clock abstraction tests
+* Docker startup/restart tests
+
+Organizer can modify event structure while the approved event is DRAFT.
+
+Organizer cannot modify start time, submission deadline, end time, maximum team size, tracks, prizes, or custom questions once the event reaches ONGOING.
+
+Structural event updates remain rejected after ENDED.
+
+Exact `start_at` boundary is treated as ONGOING.
+
+Rejected structural updates do not partially modify the event.
+
+### Phase 9 — Final Packaging
+
+Only after the application works:
+
+* README
+* architecture documentation
+* data model documentation
+* license
+* acceptance documentation
+* final local startup verification
+* final Docker Compose verification
+
+---
 
 # 39. Critical End-to-End Test
 
@@ -2285,6 +2557,7 @@ The E2E lifecycle test must use an injected/fake server clock.
 Do not wait or sleep for real time.
 
 Explicitly advance the server clock to:
+
 1. a time before `start_at`
 2. exactly `start_at`
 3. a time before `submission_deadline`
@@ -2293,7 +2566,7 @@ Explicitly advance the server clock to:
 
 All lifecycle, deadline, mutation, and visibility assertions must be evaluated against that controlled clock.
 
-The most important test should reproduce the complete platform lifecycle.
+The most important test should reproduce the complete T1 platform lifecycle.
 
 1. Create Admin
 2. Create normal authenticated user
@@ -2309,7 +2582,7 @@ The most important test should reproduce the complete platform lifecycle.
 12. Confirm login establishes a new authenticated session
 13. Confirm logout invalidates the session
 14. Organizer configures event
-15. Confirm event is DRAFT before start_at
+15. Confirm event is DRAFT before `start_at`
 16. Confirm Organizer can modify event structure while event is DRAFT
 17. Participant joins event
 18. Participant creates team
@@ -2323,23 +2596,22 @@ The most important test should reproduce the complete platform lifecycle.
 26. Team edits project
 27. Team submits project
 28. Team reopens and resubmits before deadline
-29. Confirm event becomes ONGOING at start_at
-30. Confirm structural event configuration is frozen at start_at
+29. Confirm event becomes ONGOING at `start_at`
+30. Confirm structural event configuration is frozen at `start_at`
 31. Confirm Organizer cannot modify frozen event structure while ONGOING
 32. Before the submission deadline, confirm project images are not publicly accessible
 33. Confirm authorized project users can access their private images
-34. Organizer assigns a Judge
-35. Confirm Judge membership is created
-36. Confirm Judge can access event/project context without participant permissions
-37. Current server time reaches the submission deadline
-38. Confirm project mutations are rejected at the exact deadline boundary
-39. Confirm project is effectively locked
-40. Confirm team changes are locked
-41. Confirm submitted project is publicly visible
-42. Confirm gallery search/filter works
-43. Confirm event becomes ENDED at end_at
-44. Confirm unauthorized users cannot modify protected resources
-45. Confirm Judge cannot edit projects and has read-only project access
+34. Confirm Judge can access the appropriate assigned-event/project context according to the role model
+35. Confirm Judge cannot edit projects
+36. Current server time reaches the submission deadline
+37. Confirm project mutations are rejected at the exact deadline boundary
+38. Confirm project is effectively locked
+39. Confirm team changes are locked
+40. Confirm submitted project is publicly visible
+41. Confirm gallery search/filter works
+42. Confirm event becomes ENDED at `end_at`
+43. Confirm unauthorized users cannot modify protected resources
+44. Confirm cross-event access attempts are rejected
 
 ---
 
@@ -2351,23 +2623,27 @@ Prioritize:
 
 ```text
 Correctness
-↓
+    ↓
 Security
-↓
+    ↓
 Deadline enforcement
-↓
+    ↓
 Role isolation
-↓
+    ↓
 Complete user lifecycle
-↓
+    ↓
 Usability
-↓
+    ↓
 Visual polish
 ```
 
 Do not sacrifice backend correctness for UI polish.
 
 Do not build speculative abstractions.
+
+Do not implement Tier 2 judging workflows while completing Tier 1.
+
+Judge remains a real platform role, but judge assignment, scoring, normalization, and other judging workflows belong to higher-tier implementation.
 
 ---
 
@@ -2383,20 +2659,20 @@ docker compose up
 
 This must work from a clean checkout without requiring:
 
-a hosted database
-hosted authentication
-cloud storage
-external API keys
-external runtime services
+* a hosted database
+* hosted authentication
+* cloud storage
+* external API keys
+* external runtime services
 
 The local environment must provide:
 
-application
-local SQLite database
-persistent uploaded images
-seeded data
-working authentication
-complete core lifecycle
+* application
+* local SQLite database
+* persistent uploaded images
+* seeded data
+* working authentication
+* complete core lifecycle
 
 Docker and the local runtime are part of the project's development baseline, not optional final packaging.
 
@@ -2421,6 +2697,8 @@ Before considering the implementation complete, verify:
 * [ ] Logout works
 * [ ] Sessions work
 * [ ] Passwords are securely hashed
+* [ ] CSRF protection works for authenticated state-changing requests
+* [ ] Session cookies use appropriate security attributes
 
 ### Event creation
 
@@ -2439,6 +2717,7 @@ Before considering the implementation complete, verify:
 * [ ] Tracks work
 * [ ] Prizes work
 * [ ] Custom questions work
+* [ ] Structural configuration freezes at ONGOING
 
 ### Teams
 
@@ -2448,6 +2727,8 @@ Before considering the implementation complete, verify:
 * [ ] Invite links work
 * [ ] Invite authentication flow works
 * [ ] Capacity is enforced
+* [ ] Invite expiration is enforced
+* [ ] Invite revocation works
 * [ ] Deadline is enforced
 
 ### Projects
@@ -2475,6 +2756,7 @@ Before considering the implementation complete, verify:
 
 * [ ] Participant permissions work
 * [ ] Judge can access appropriate event/project context
+* [ ] Judge cannot modify projects
 * [ ] Organizer permissions work
 * [ ] Admin approval works
 * [ ] Cross-event permissions are isolated
@@ -2488,6 +2770,33 @@ Before considering the implementation complete, verify:
 * [ ] Invite tokens are secure
 * [ ] Input validation exists
 * [ ] Upload validation exists
+* [ ] Private files cannot be accessed through unauthorized project IDs
+* [ ] CSRF protection is enforced
+
+### Runtime
+
+* [ ] `docker compose up` starts successfully from a clean checkout
+* [ ] SQLite is created locally
+* [ ] Migrations run successfully
+* [ ] Seed data is available after startup
+* [ ] Seed data is deterministic
+* [ ] Repeated startup does not duplicate seed records
+* [ ] Existing user-created data is preserved
+* [ ] Existing uploaded files are preserved
+* [ ] Persistent upload storage is mounted correctly
+* [ ] Uploaded images survive container restart
+* [ ] No cloud dependency exists
+
+### Database integrity
+
+* [ ] Duplicate user email is rejected
+* [ ] Duplicate event membership is rejected
+* [ ] Duplicate project for the same team/event is rejected
+* [ ] Duplicate project answer is rejected
+* [ ] Invalid event date ordering is rejected
+* [ ] Invalid enum/status values are rejected
+* [ ] Foreign-key violations are rejected
+* [ ] SQLite constraints remain active
 
 ### DOGFOOD Compliance
 
@@ -2523,43 +2832,69 @@ Correctness of the required Core lifecycle takes priority over unfinished higher
 
 # 43. Definition of Done
 
-Organizers/Team owners can revoke outstanding team invitations, and revoked invitations cannot be accepted.
-
 The implementation is complete when:
 
 1. A normal authenticated user can create an event proposal.
-2. The proposal enters a pending approval state.
-3. An Admin can approve it.
-4. Approval automatically makes the creator the Organizer of that event.
-5. The Organizer can configure and run the event.
-6. Event lifecycle status is correctly derived from approval state and configured dates.
-7. Event structure can be configured during DRAFT and is frozen when the event becomes ONGOING.
-8. Participants can form teams using invitation links.
-9. Invitation state survives signup/login.
-10. Teams can create and edit a shared project.
-11. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
-12. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
-13. Local project images persist across application restarts when persistent storage is mounted.
-14. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
-15. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
-16. Submitted projects become publicly visible after the deadline.
-17. The public gallery supports search and filtering.
-18. Organizers can assign and remove event-scoped Judges.
-19. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
-20. Cross-event authorization is enforced server-side.
-21. The complete lifecycle works from a clean local installation.
-22. The implementation remains limited to the functionality specified in this document.
-23. Required event, membership, team, invitation, configuration, and project read operations are available with correct authorization and event isolation.
 
-24. Public and protected read endpoints do not expose private or security-sensitive data.
-25. State-changing authenticated requests are protected against CSRF.
-26. Session cookies use appropriate security attributes and sessions are invalidated on logout.
-27. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
-28. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
-29. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
-30. Seed initialization is deterministic and idempotent: a clean local installation receives the required demonstration data, repeated startup does not duplicate or overwrite existing data, and production/non-demo environments do not automatically reset application data.
-31. All lifecycle, deadline, mutation, and visibility time checks use one authoritative server clock abstraction.
-32. Time-dependent tests are deterministic and do not depend on real-time sleeping.
+2. The proposal enters a pending approval state.
+
+3. An Admin can approve it.
+
+4. Approval automatically makes the creator the Organizer of that event.
+
+5. The Organizer can configure and run the event.
+
+6. Event lifecycle status is correctly derived from approval state and configured dates.
+
+7. Event structure can be configured during DRAFT and is frozen when the event becomes ONGOING.
+
+8. Participants can form teams using invitation links.
+
+9. Invitation state survives signup/login.
+
+10. Teams can create and edit a shared project.
+
+11. Projects can be submitted, reopened, edited, and resubmitted before the deadline.
+
+12. The backend strictly enforces the submission deadline using server time, including the exact deadline boundary, and locks projects and team changes without requiring a scheduler.
+
+13. Local project images persist across application restarts when persistent storage is mounted.
+
+14. Project images are stored outside the public web root and are served according to project visibility and authorization rules.
+
+15. Team creation, invitation acceptance, and project state transitions are atomic and cannot leave partial database state.
+
+16. Submitted projects become publicly visible after the deadline.
+
+17. The public gallery supports search and filtering.
+
+18. Judge, Participant, Organizer, and Admin permissions are correctly isolated.
+
+19. Cross-event authorization is enforced server-side.
+
+20. The complete lifecycle works from a clean local installation.
+
+21. The implementation remains limited to the functionality specified in this document.
+
+22. Required event, membership, team, invitation, configuration, and project read operations are available with correct authorization and event isolation.
+
+23. Public and protected read endpoints do not expose private or security-sensitive data.
+
+24. State-changing authenticated requests are protected against CSRF.
+
+25. Session cookies use appropriate security attributes and sessions are invalidated on logout.
+
+26. `docker compose up` starts the complete seeded application from a clean local installation, including local SQLite and persistent upload storage, without cloud or external runtime dependencies.
+
+27. The project satisfies the DOGFOOD submission constraints, including Tier 1 Core completion, self-hosted local operation, `docker compose up`, no external runtime service dependency, public GitHub repository, OSI-approved license, and the required submission deadline.
+
+28. Database constraints and indexes enforce the required uniqueness, foreign-key, status, and event-scoped integrity rules, while business rules requiring authenticated context or server time remain transactionally enforced by the backend.
+
+29. Seed initialization is deterministic and idempotent: a clean local installation receives the required demonstration data, repeated startup does not duplicate or overwrite existing data, and production/non-demo environments do not automatically reset application data.
+
+30. All lifecycle, deadline, mutation, and visibility time checks use one authoritative server clock abstraction.
+
+31. Time-dependent tests are deterministic and do not depend on real-time sleeping.
 
 ---
 
@@ -2571,8 +2906,11 @@ A single user account can participate in the platform in different ways:
 
 ```text
                     ┌── Participant in Event A
+
 Authenticated User ─┼── Organizer in Event B
+
                     ├── Judge in Event C
+
                     └── Creator of pending Event D
 ```
 
