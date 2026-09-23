@@ -167,10 +167,41 @@ In this mode, the resulting score is the direct output of the assigned evaluator
 
 ## 2. Purpose & Principles
 
-Phase 1 rapidly triages a large submission population down to an exact shortlist $K$ for detailed evaluation.
+Pairwise evaluation is primarily designed to address large submission populations, where performing a detailed rubric evaluation on every submission would create excessive workload for judges.
 
-* **Primary Objective:** Minimize the **False Exclusion Rate** (the accidental elimination of genuinely strong submissions due to noisy early comparisons).
-* **Forced Choice:** Judges perform binary comparisons between two anonymized submissions ($A$ vs $B$). No numerical scores, ties, skips, or confidence sliders are exposed.
+Instead of requiring judges to perform a full rubric evaluation of the entire population, the system uses human pairwise evaluation to rapidly reduce the submission population to an exact shortlist (K). The resulting pairwise judgments are aggregated using the configured Bradley–Terry model to estimate relative submission strength and determine which submissions advance to detailed evaluation.
+
+The objective is not to replace human judgment with automation. Judges provide the underlying evaluation through direct human comparisons; statistical aggregation is used to make that human evaluation scalable to large submission populations.
+
+* **Primary Objective**:
+Minimize the **False Exclusion Rate**:
+- The probability that a genuinely strong submission is incorrectly eliminated during the early pairwise evaluation stage because of limited or noisy comparisons.
+
+Because false exclusion cannot be completely eliminated under finite evaluation budgets, the system uses balanced assignment, repeated comparisons, adaptive exploration, and uncertainty-aware selection to reduce this risk.
+
+* **Forced Choice:** Forced Choice
+
+Judges perform binary comparisons between two anonymized submissions:
+
+$$A \quad \text{vs.} \quad B$$
+
+The judge selects which submission is stronger according to the configured evaluation instruction.
+
+The pairwise interface exposes:
+
+* No numerical score
+* No tie option
+* No skip option
+* No confidence slider
+
+This keeps Phase 1 focused on a single human judgment:
+
+$$A \succ B$$
+
+or
+$$B \succ A$$
+
+These human comparisons are then aggregated by the Bradley–Terry model into relative-strength estimates. The resulting estimates are used for scalable triage and shortlist formation, not as Phase 2 rubric scores.
 
 ## 3. Assignment Strategy & Deterministic Cyclic Scheduler
 
