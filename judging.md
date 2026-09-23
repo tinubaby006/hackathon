@@ -1,90 +1,167 @@
 # JUDGING.md — assignment strategy, scoring maths, normalization method
 
-> **Scope:** This document is the definitive end-to-end judging specification for the Dogfood Hackathon platform architecture (`Type 1` Single Pool and `Type 2` Multi-Track).
-> It defines the mathematical, statistical, operational, and security mechanisms across two distinct, non-overlapping phases:
-> 1. **Phase 1 — Pairwise Relative Triage & Exact-K Shortlisting**
-> 2. **Phase 2 — Multi-Judge Rubric Evaluation, Overlap-Based Calibration, & Final Scoring**
-> 
-> 
-> **Phase 1 asks:** *Which submissions possess sufficient relative merit to earn detailed evaluation?*
-> **Phase 2 asks:** *Given the shortlisted finalists, what are their absolute, calibrated, and normalized rubric scores?*
+# Scope
+When an event is conducted, the judging environment can vary significantly. The number of submissions, number of judges, required reviews per submission, number of evaluation stages, and whether the event uses tracks can all differ from one event to another. When tracks are present, the event may require track-specific winners, overall winners, or both.
 
----
+These variations create a corresponding set of operational and statistical challenges: assigning judges so that workload is balanced, ensuring that enough overlapping evaluation data exists for meaningful score normalization, accounting for differences in judge severity or judging style, identifying anomalous or inconsistent evaluations, handling incomplete or uneven reviews, and maintaining isolation between independent judging groups or tracks where required.
+
+This document describes a unified judging framework designed to address these problems while remaining dynamic to the configuration and scale of the event.
+
+The system uses structured judge assignment, human evaluation, statistical aggregation, cross-judge normalization, anomaly detection, and explicit safeguards to maintain reliable results across different event configurations. Where the scale of submissions makes detailed evaluation impractical, pairwise human evaluation combined with Bradley–Terry aggregation can be used to efficiently reduce the evaluation population before deeper rubric-based evaluation.
+
+The objective is not to impose one fixed judging algorithm on every event, but to provide a robust framework that adapts to the event's parameters while preserving human judgment, statistical validity, transparency, and organizer authority.
 
 # 0. System Pipeline & Structural Invariants
 
-```text
-ALL VALID SUBMISSIONS (N)
-           │
-           ├─────────────────────────────────────────┐
-           ▼                                         ▼
-TYPE 1: NO TRACKS                           TYPE 2: MULTI-TRACK
-(Global Submission Pool)                    (Isolated Track Panels)
-           │                                         │
-           ▼                                         ▼
-PHASE 1: PAIRWISE TRIAGE                    INDEPENDENT TRACK EVALUATION
-  ├── Anonymization & Hashing                 ├── Track Feasibility Checks
-  ├── Balanced Cyclic Assignment              ├── Isolated Panel Assignments
-  ├── Regularized Bradley–Terry Fitting       ├── Exact R Reviews & Workloads
-  ├── Protected Adaptive Exploration          ├── Track-Scoped Overlap Graph
-  └── Exact-K Shortlist Output                └── Track WLS Offset Calibration
-           │                                         │
-           ▼                                         ├─────────────────────────┐
-PHASE 2: DETAILED RUBRIC                             ▼                         ▼
-  ├── Feasibility Guards                    TYPE 2A RESULTS           TYPE 2B RESULTS
-  ├── Exact Workload Quotas                 (Track Winners Only)      (Overall Finalist Panel)
-  ├── Connected Overlap Graph                        │                         │
-  ├── Immutable Raw Scoring                          └────────────┬────────────┘
-  ├── WLS Judge Offset Calibration                                │
-  ├── Single-Aggregate Normalization                              ▼
-  └── Deterministic Tie Resolution                       FINALIZED RESULTS
-
-```
+                         ALL VALID SUBMISSIONS (N)
+                                  │
+                  ┌───────────────┴───────────────┐
+                  ▼                               ▼
+        TYPE 1: NO TRACKS                TYPE 2: MULTI-TRACK
+       Global Submission Pool          Independent Track Pools
+                  │                               │
+                  │                    ┌──────────┴──────────┐
+                  │                    ▼                     ▼
+                  │              Track A Panel          Track B Panel
+                  │                    │                     │
+                  └────────────────────┴─────────────────────┘
+                                  │
+                                  ▼
+                 PHASE 1: PAIRWISE EVALUATION
+                    & BRADLEY–TERRY AGGREGATION
+                         (when configured)
+                                  │
+                    ├── Submission Anonymization
+                    ├── Judge Assignment
+                    ├── Balanced Workload Allocation
+                    ├── Human Pairwise Comparisons
+                    ├── Regularized Bradley–Terry
+                    ├── Protected Adaptive Exploration
+                    └── Shortlist / Advancement
+                                  │
+                                  ▼
+                    PHASE 2: DETAILED RUBRIC
+                                  │
+                    ├── Feasibility Guards
+                    ├── Judge Assignment
+                    ├── Exact Workload Quotas
+                    ├── Connected Overlap Graph
+                    ├── Independent Rubric Scoring
+                    ├── Immutable Raw Evidence
+                    ├── WLS Judge Offset Calibration
+                    ├── Cross-Judge Normalization
+                    └── Deterministic Tie Resolution
+                                  │
+                                  ▼
+                         EVALUATION RESULTS
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+             TRACK RESULTS               OVERALL RESULTS
+          (if configured)             (if configured)
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  ▼
+                         FINALIZED RESULTS
 
 ## 0.1 Core Invariants
 
 * **Phase Isolation:** Phase 1 latent scores ($\theta$) never serve as Phase 2 rubric scores.
 * **Fail-Closed Governance:** Invalid configurations or unresolvable constraints abort explicitly rather than silently degrading statistical models.
-* **Workload Parity:** Judge assignment distributions satisfy $\max(\text{load}) - \min(\text{load}) \le 1$ across all execution units.
-* **Immutable Evidence:** Raw judge reviews, timestamped submissions, and system snapshots are immutable; calibration modifies derived metrics only.
-* **Determinism:** Given identical seeds, algorithm versions, and input datasets, execution produces byte-identical outputs.
-
+* **Workload Parity:** For every assignment pool in which the configured constraints are feasible, judge workloads are balanced such that max(load) − min(load) ≤ 1. If this cannot be achieved while satisfying mandatory constraints, the assignment is rejected rather than silently violating those constraints
+* **Immutable Evidence:** Raw submissions, raw judge evaluations, assignment decisions, and their associated timestamps are append-only and immutable after creation. Normalization, calibration, anomaly detection, and ranking operate only on derived data and never modify the underlying evidence.
+* **Determinism:**  Given identical canonicalized inputs, algorithm versions, configuration, and random seeds, all algorithmic outputs are deterministic. Any runtime-generated values such as timestamps or identifiers are excluded from deterministic comparison unless explicitly supplied as inputs.
 ---
 
 # PART I — FEASIBILITY & CONFIGURATION GUARDS
 
-Before assignment generation or model fitting occurs in either Phase 1 or Phase 2, the setup parameters are validated against strict feasibility guards to prevent runtime deadlocks, infinite mathematical solutions, or sparse graph disconnections.
+Before assignment generation or model fitting occurs in either Phase 1 or Phase 2, the setup parameters are validated against strict feasibility guards. These guards prevent impossible assignments, runtime deadlocks, undefined statistical models, and insufficient overlap for cross-judge calibration.
 
 ## 1. Mathematical Feasibility Guards
 
-Given total submissions $N$, active judge panel $J$, required independent reviews per submission $R$, and Phase 1 shortlist target $K$:
+Given total submissions \(N\), active judge panel \(J\), required independent reviews per submission \(R\), and Phase 1 shortlist target \(K\):
 
 ### Guard 1: Active Judge Feasibility
 
-Every submission requires $R$ distinct judges. The system requires $J \ge R$.
+Every submission requires \(R\) distinct judges. The system therefore requires at least \(R\) active judges.
 
-
-$$\text{If } R > J \implies \text{THROW } \text{FEASIBILITY\_TOO\_FEW\_JUDGES}$$
+$$
+\text{If } R > J
+\implies
+\text{THROW } \texttt{FEASIBILITY\_TOO\_FEW\_JUDGES}
+$$
 
 ### Guard 2: Workload Capacity & Idle Judge Prevention
 
-Total required review slots $A = N \times R$ must equal or exceed active judges $J$ so that every active judge receives at least one review task.
+The total number of required review slots is
 
+$$
+A=N\times R.
+$$
 
-$$\text{If } (N \times R) < J \implies \text{THROW } \text{FEASIBILITY\_TOO\_MANY\_JUDGES}$$
+For a workload-balanced assignment in which every active judge participates, the available review slots must equal or exceed the number of active judges.
+
+$$
+\text{If } N\times R < J
+\implies
+\text{THROW } \texttt{FEASIBILITY\_TOO\_MANY\_JUDGES}
+$$
+
+This guard does not by itself guarantee a valid assignment; judge eligibility, track isolation, preserved assignments, and other organizer-defined constraints must still be satisfiable.
 
 ### Guard 3: Overlap & Calibration Feasibility
 
-For $R \ge 2$, every submission evaluated by $R$ judges creates $\binom{R}{2}$ pair-overlap events. Global additive calibration requires sufficient pairwise overlap events across the panel to form a connected projection graph $G_J$ (requiring at least $J - 1$ edges).
+For \(R\ge2\), every submission evaluated by \(R\) judges creates
 
+$$
+\binom{R}{2}
+$$
 
-$$\text{If } R \ge 2 \text{ and } N \cdot \frac{R(R - 1)}{2} < (J - 1) \implies \text{THROW } \text{FEASIBILITY\_SPARSE\_OVERLAP}$$
+judge-pair overlap events.
 
-### Guard 4: Single Review Mode Exception ($R = 1$)
+Across \(N\) submissions, the maximum number of pair-overlap events generated by the assignment is therefore
 
-When $R = 1$, zero pair-overlap events are created ($\binom{1}{2} = 0$). The system permits execution for simple single-evaluator pass-throughs but bypasses cross-judge WLS calibration ($b_j = 0$ for all judges).
+$$
+E_{\text{overlap}}
+=
+N\binom{R}{2}.
+$$
 
----
+For additive cross-judge calibration, the judge-overlap graph \(G_J\) must ultimately be connected. A connected graph containing \(J\) judges requires at least \(J-1\) edges.
+
+Therefore, the following is a **necessary minimum edge-count condition**:
+
+$$
+\text{If }R\ge2
+\text{ and }
+N\binom{R}{2}<J-1
+\implies
+\text{THROW } \texttt{FEASIBILITY\_SPARSE\_OVERLAP}
+$$
+
+Passing this guard does **not** prove connectivity. The assignment-generation algorithm must explicitly construct or verify a connected judge-overlap graph before calibration is permitted.
+
+If the resulting graph is disconnected, cross-judge calibration is not mathematically identifiable across the disconnected components and the system must reject the assignment or require an organizer-approved configuration change.
+
+### Guard 4: Single Review Mode Exception (\(R=1\))
+
+When \(R=1\),
+
+$$
+\binom{1}{2}=0,
+$$
+
+so no judge-pair overlap exists.
+
+The system therefore permits single-evaluator pass-through operation, but cross-judge WLS calibration is bypassed:
+
+$$
+b_j=0
+\qquad\forall j.
+$$
+
+In this mode, the resulting score is the direct output of the assigned evaluator's configured scoring process and must not be represented as cross-judge normalized.
+
 
 # PART II — PHASE 1: PAIRWISE TRIAGE & EXACT-K SHORTLISTING
 
