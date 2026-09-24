@@ -2,13 +2,21 @@
 
 ## Agent Implementation Prompt & Tier 1 Execution Plan
 
-> **Purpose:** This document is the implementation contract for building the first working version of the DOGFOOD HACKATHON platform.
->
-> The agent should implement the functionality explicitly defined below, keep the architecture simple, and avoid inventing additional product workflows that are not required.
+ **Purpose**
 
----
+You are the implementation agent responsible for building the first working version of the DOGFOOD HACKATHON platform.
 
-# 1. Implementation Goal
+This document is the implementation contract for Tier 1 (T1). Treat the requirements below as the source of truth for what must be implemented in this version.
+
+Your job is to:
+
+Implement every requirement explicitly defined in this document.
+Enforce important rules on the backend, not only in the UI.
+Build a complete, locally runnable application, not a mockup or frontend-only prototype.
+Keep the architecture simple and maintainable.
+Write tests for the important business rules and security boundaries.
+Ensure the resulting application can run locally without hosted services or external API dependencies.
+# 1.Implementation Goal
 
 Build a complete, locally runnable hackathon platform that supports this lifecycle:
 
@@ -917,7 +925,7 @@ Do not expose privileged functionality merely because a frontend route is hidden
 
 ---
 
-# 24. Suggested Database Model
+# 24. Database Model
 
 Use these tables.
 
@@ -2185,6 +2193,7 @@ Only after the application works:
 * final Docker Compose verification
 
 ---
+
 # 36. Testing Requirements
 
 At minimum, create automated coverage for:
@@ -2360,49 +2369,35 @@ Test both:
 
 # 37. Seed Data
 
-Provide useful local seed data.
+Use the provided `fixtures.json` as the canonical source for the seeded/demo hackathon data.
 
-The seeded environment should make the complete T1 lifecycle easy to demonstrate.
+The application should provide a deterministic local seed/initialization process that loads the supported data from `fixtures.json` into the local SQLite database.
 
-Include:
+Do not invent a separate seed dataset when equivalent data already exists in `fixtures.json`.
 
-* Admin account
-* several normal users
-* at least one approved event
-* at least one pending event proposal
-* participant memberships
-* judge membership
-* organizer membership
-* example team
-* example project
+The seeded environment should make the complete supported T1 lifecycle easy to demonstrate.
+
+The fixture data includes the shared hackathon dataset, including:
+
+* event
 * tracks
-* prizes
-* custom questions
+* judges
+* projects/submissions
+* other fixture data defined by `fixtures.json`
+
+Only data and relationships supported by the current T1 implementation need to be materialized into the T1 database. Do not implement higher-tier judging functionality merely because corresponding fixture data exists.
 
 Seed behavior must be deterministic and safe.
 
-For a clean local database:
+The seed process must:
 
-* the seed process must create the required demonstration data
-* the application must be immediately usable after startup
-* the seeded relationships must be internally consistent
+* create the required local demo data when initializing a clean database
+* not duplicate records when the application restarts
+* not overwrite existing user-created data
+* not reset the database on normal application startup
+* preserve existing application data across application/container restarts
 
-For an existing local database:
-
-* seeding must be idempotent
-* repeated startup must not duplicate seed records
-* existing user-created data must not be deleted or overwritten
-* existing uploaded files must not be removed by seeding
-
-Do not make the seed data dependent on external services.
-
-Demo/development credentials must be documented clearly for local use.
-
-Production or non-demo deployments must not automatically reset the database or overwrite existing application data with demo seed data.
-
-Demo seed initialization may be enabled explicitly for a fresh local environment.
-
----
+The provided `fixtures.json` must remain the source of truth for the shared fixture dataset.
 
 # 38. Recommended Implementation Order
 
@@ -2418,7 +2413,7 @@ Build the required local runtime before feature implementation:
 * persistent upload volume
 * local environment defaults
 * database migration/startup flow
-* deterministic seed data
+* seed data from `fixtures.json`
 * application startup health verification
 
 `docker compose up` must start a working locally seeded portal from a clean checkout.
@@ -2512,16 +2507,11 @@ All later development phases should run inside this supported local environment.
 * database integrity tests
 * clock abstraction tests
 * Docker startup/restart tests
-
-Organizer can modify event structure while the approved event is DRAFT.
-
-Organizer cannot modify start time, submission deadline, end time, maximum team size, tracks, prizes, or custom questions once the event reaches ONGOING.
-
-Structural event updates remain rejected after ENDED.
-
-Exact `start_at` boundary is treated as ONGOING.
-
-Rejected structural updates do not partially modify the event.
+* Organizer can modify event structure while the approved event is DRAFT
+* structural event updates are rejected once the event is ONGOING
+* structural event updates remain rejected after ENDED
+* exact start_at boundary is treated as ONGOING
+* rejected structural updates do not partially modify the event
 
 ### Phase 9 — Final Packaging
 
@@ -2590,17 +2580,15 @@ The most important test should reproduce the complete T1 platform lifecycle.
 31. Confirm Organizer cannot modify frozen event structure while ONGOING
 32. Before the submission deadline, confirm project images are not publicly accessible
 33. Confirm authorized project users can access their private images
-34. Confirm Judge can access the appropriate assigned-event/project context according to the role model (but don't implement this now we need to implement this in higher tier)
-35. Confirm Judge cannot edit projects (but don't implement this now we need to implement this in higher tier)
-36. Current server time reaches the submission deadline
-37. Confirm project mutations are rejected at the exact deadline boundary
-38. Confirm project is effectively locked
-39. Confirm team changes are locked
-40. Confirm submitted project is publicly visible
-41. Confirm gallery search/filter works
-42. Confirm event becomes ENDED at `end_at`
-43. Confirm unauthorized users cannot modify protected resources
-44. Confirm cross-event access attempts are rejected
+34. Current server time reaches the submission deadline
+35. Confirm project mutations are rejected at the exact deadline boundary
+36. Confirm project is effectively locked
+37. Confirm team changes are locked
+38. Confirm submitted project is publicly visible
+39. Confirm gallery search/filter works
+40. Confirm event becomes ENDED at `end_at`
+41. Confirm unauthorized users cannot modify protected resources
+42. Confirm cross-event access attempts are rejected
 
 ---
 
@@ -2659,7 +2647,7 @@ The local environment must provide:
 * application
 * local SQLite database
 * persistent uploaded images
-* seeded data
+* seeded data from `fixtures.json`
 * working authentication
 * complete core lifecycle
 
@@ -2667,7 +2655,7 @@ Docker and the local runtime are part of the project's development baseline, not
 
 The implementation must remain usable after application and container restarts.
 
-The clean local startup path may initialize the required demonstration seed data.
+The clean local startup path may initialize the required demonstration seed data from `fixtures.json`.
 
 The seed process must be safe to run repeatedly and must not reset an existing database.
 
@@ -2744,8 +2732,7 @@ Before considering the implementation complete, verify:
 ### Roles
 
 * [ ] Participant permissions work
-* [ ] Judge can access appropriate event/project context
-* [ ] Judge cannot modify projects
+* [ ] Judge role, if implemented, follows spec
 * [ ] Organizer permissions work
 * [ ] Admin approval works
 * [ ] Cross-event permissions are isolated
@@ -2767,8 +2754,7 @@ Before considering the implementation complete, verify:
 * [ ] `docker compose up` starts successfully from a clean checkout
 * [ ] SQLite is created locally
 * [ ] Migrations run successfully
-* [ ] Seed data is available after startup
-* [ ] Seed data is deterministic
+* [ ] Seed data from `fixtures.json` is available after startup
 * [ ] Repeated startup does not duplicate seed records
 * [ ] Existing user-created data is preserved
 * [ ] Existing uploaded files are preserved
