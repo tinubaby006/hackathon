@@ -233,17 +233,6 @@ A judge can:
 
 Judges must not receive participant/team-management permissions unless they separately have that role in another event.
 
-### Judge assignment
-
-A Judge is assigned explicitly to an approved event by an Organizer of that event.
-
-The target user must:
-
-* already have an authenticated platform account
-* have no existing membership in the event
-
-Judge assignment creates:
-
 ```text
 event_memberships(
   event_id = event.id,
@@ -1428,7 +1417,7 @@ Organizer:
 - may inspect participants, teams, and submitted projects for their event
 
 Judge:
-- may view the event context and submitted project information for their assigned event
+- may view the event context and submitted project information for their assigned event (but don't implement this now we need to implement this in higher tier)
 - must not receive participant/team-management permissions
 
 Participant:
@@ -1501,7 +1490,7 @@ GET /api/events/:eventId/projects is restricted to appropriate Organizer and Jud
 
 Organizers may inspect projects for their event.
 
-Judges may view submitted projects for their assigned event.
+Judges may view submitted projects for their assigned event but don't implement this now we need to implement this in higher tier
 
 Participants may access their team's project through GET /api/teams/:teamId/project when authorized.
 
@@ -1723,7 +1712,7 @@ The Organizer must also be able to:
 * view the event's assigned Judges
 * assign an existing platform user as Judge
 * remove an assigned Judge
-
+* but dont implement this now we need to implement this in higher trie
 ---
 
 # 32. Security Requirements
@@ -1882,7 +1871,7 @@ At minimum, create automated coverage for:
 - Organizer can read participants for their event
 - Organizer can read teams for their event
 - Organizer can read submitted projects for their event
-- Judge can read submitted project information for their assigned event
+- Judge can read submitted project information for their assigned event (but don't implement this now we need to implement this in higher tier)
 - Participant can read their authorized team and project
 - participant cannot read another event's protected team/project data
 - event tracks/prizes/questions are correctly scoped to the event
@@ -2223,7 +2212,7 @@ At minimum, create automated coverage for:
 * Organizer can read participants for their event
 * Organizer can read teams for their event
 * Organizer can read submitted projects for their event
-* Judge can read submitted project information for their assigned event
+* Judge can read submitted project information for their assigned event (but don't implement this now we need to implement this in higher tier)
 * Participant can read their authorized team and project
 * participant cannot read another event's protected team/project data
 * event tracks/prizes/questions are correctly scoped to the event
@@ -2542,7 +2531,7 @@ Only after the application works:
 * architecture documentation
 * data model documentation
 * license
-* acceptance documentation
+* acceptance documentation (generated)
 * final local startup verification
 * final Docker Compose verification
 
@@ -2601,8 +2590,8 @@ The most important test should reproduce the complete T1 platform lifecycle.
 31. Confirm Organizer cannot modify frozen event structure while ONGOING
 32. Before the submission deadline, confirm project images are not publicly accessible
 33. Confirm authorized project users can access their private images
-34. Confirm Judge can access the appropriate assigned-event/project context according to the role model
-35. Confirm Judge cannot edit projects
+34. Confirm Judge can access the appropriate assigned-event/project context according to the role model (but don't implement this now we need to implement this in higher tier)
+35. Confirm Judge cannot edit projects (but don't implement this now we need to implement this in higher tier)
 36. Current server time reaches the submission deadline
 37. Confirm project mutations are rejected at the exact deadline boundary
 38. Confirm project is effectively locked
