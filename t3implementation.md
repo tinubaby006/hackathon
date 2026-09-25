@@ -92,6 +92,19 @@ Moderation Pipeline           Voting Engine (1-Person-1-Vote or Quadratic)
 * **Captcha & Bot Defense:** Do NOT depend on external Cloudflare Turnstile or Google reCAPTCHA. Implement a self-contained local visual/math challenge fallback (e.g., SVG arithmetic captcha or cryptographic proof-of-work header) when open voting is enabled.
 * **Email Verification in Local Mode:** For email-gated voting, when external SMTP is unconfigured, verification codes/tokens MUST be logged to the server console and stored in SQLite for easy local test execution.
 
+## 2.4 Comprehensive Security Specification & Threat Model
+
+> **VITAL SECURITY REQUIREMENT:** The coding agent MUST enforce all server-side security controls below. Frontend hiding is strictly NOT authorization.
+
+1. **CSRF Protection & Secure Cookies:** All state-changing endpoints (`POST`, `PUT`, `DELETE`) MUST validate a cryptographically secure CSRF token tied to the session. Session cookies MUST use `HttpOnly`, `SameSite=Lax` (or `Strict`), and `Path=/`.
+2. **Input Sanitization & XSS Prevention:** Public project comments MUST be sanitized server-side (HTML entity encoding / DOMPurify) before database insertion to prevent stored XSS attacks.
+3. **Parameter Tampering & Negative Vote Rejection:** Server validation MUST enforce integer constraints $\text{vote\_weight}_i \ge 0$. Negative vote weights, non-integer inputs, or quadratic point budget overflows ($\sum v_i^2 > B$) MUST be rejected immediately with `HTTP 400 Bad Request`.
+4. **Self-Voting Blocking:** In `AUTHENTICATED` voting mode, the backend MUST verify `voter.userId !== project.authorId` and that the voter is not a member of the project team. Self-voting attempts MUST return `HTTP 403 Forbidden`.
+5. **IDOR & Organizer Privilege Scoping:** Organizer endpoints (`/api/organizer/...`) MUST verify server-side that the authenticated user holds explicit organizer permissions for the specific `event_id` in the route before allowing configuration updates, audit log views, or bulk vote overrides.
+6. **OTP Token Security & Rate Limiting:** Email OTP verification tokens MUST be 6 digits, cryptographically random, expire in 10 minutes, lock out after 5 failed validation attempts, and invalidate immediately upon successful verification. OTP request endpoints MUST be rate-limited (max 3 requests/min per IP).
+7. **Vote Result Privacy Leak Seals:** Public endpoints (`GET /api/events/[id]/ballot`, `GET /api/projects/[id]`) MUST strip all vote tallies and rankings server-side while `voting_status == 'ACTIVE'`. Aggregate queries by non-organizers MUST yield `HTTP 403 Forbidden`.
+8. **Parameterized SQL Queries:** All database access MUST use Drizzle ORM parameterized queries or SQLite prepared statements to prevent SQL injection.
+
 ---
 
 # 3. ROLE MODEL & VOTER IDENTITY ARCHITECTURE
@@ -371,5 +384,12 @@ Vote Submission ──► Rate Limiter ──► Duplicate Check ──► Fraud
 [ ] Documentation updated (ARCHITECTURE.md, DATA-MODEL.md, JUDGING.md threat model)
 [ ] .dogfood.toml updated to claim "T3" after checklist is 100% green
 [ ] docker compose up works locally offline
+[ ] CSRF protection enforced on all state-changing endpoints (POST/PUT/DELETE)
+[ ] Input sanitization (XSS prevention) enforced on public project comments
+[ ] Parameter tampering rejected (negative votes, non-integers, quadratic budget overflow yield HTTP 400)
+[ ] Self-voting blocked in AUTHENTICATED mode (author/team members yield HTTP 403)
+[ ] Organizer IDOR protection enforced (routes verify event ownership server-side)
+[ ] OTP tokens expire in 10 minutes, lock out after 5 failures, rate limited (max 3/min)
+[ ] SQL queries parameterized via Drizzle ORM (SQL injection prevention)
 [ ] Unit and E2E tests pass
 ```
